@@ -26,7 +26,7 @@ logging.info("Ghost Eagle starting up...")
 # Configuration
 CONFIG_FILE = os.path.expanduser("~/.ghosteagle_config.json")
 SAMPLE_RATE = 16000
-DEFAULT_MODEL = "mlx-community/whisper-base-mlx"
+DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
 
 class AudioRecorder:
     def __init__(self):
@@ -155,7 +155,8 @@ class VoiceTranscriberApp(rumps.App):
         models = [
             "mlx-community/whisper-tiny-mlx",
             "mlx-community/whisper-base-mlx",
-            "mlx-community/whisper-small-mlx"
+            "mlx-community/whisper-small-mlx",
+            "mlx-community/whisper-large-v3-turbo"
         ]
         img_model_menu = rumps.MenuItem("Select Model")
         for m in models:
