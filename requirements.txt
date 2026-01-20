@@ -8,3 +8,4 @@ pyautogui
 scipy
 py2app
 rubicon-objc
+google-genai

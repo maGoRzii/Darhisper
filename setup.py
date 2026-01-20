@@ -18,8 +18,8 @@ OPTIONS = {
         'NSAppleEventsUsageDescription': "Necesitamos controlar eventos para pegar texto automáticamente.",
         'NSAccessibilityUsageDescription': "Necesitamos accesibilidad para detectar tus atajos de teclado."
     },
-    'packages': ['rumps', 'pynput', 'sounddevice', 'numpy', 'pyperclip', 'pyautogui', 'mlx_whisper'],
-    'includes': ['mlx.core', 'mlx.nn', 'mlx.utils', 'mlx.optimizers'],
+    'packages': ['rumps', 'pynput', 'sounddevice', 'numpy', 'pyperclip', 'pyautogui', 'mlx_whisper', 'scipy'],
+    'includes': ['mlx.core', 'mlx.nn', 'mlx.utils', 'mlx.optimizers', 'google', 'google.genai'],
     'excludes': ['rubicon'],
 }
 

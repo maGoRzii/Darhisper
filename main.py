@@ -17,6 +17,10 @@ import math
 import objc
 from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath
 from Quartz import CGRectMake
+from google import genai
+import scipy.io.wavfile as wav
+import tempfile
+import traceback
 
 # Setup debug logging
 logging.basicConfig(
@@ -394,7 +398,16 @@ class VoiceTranscriberApp(rumps.App):
         # Load configuration
         self.config = self.load_config()
         self.model_path = self.config.get("model", DEFAULT_MODEL)
+        self.gemini_api_key = self.config.get("gemini_api_key", "")
         self.hotkey_check = self.deserialize_hotkey(self.config.get("hotkey", ["Key.f5"]))
+        
+        # Configurar Gemini si hay key
+        self.gemini_client = None
+        if self.gemini_api_key:
+            try:
+                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+            except Exception as e:
+                print(f"Error initializing Gemini client: {e}")
         
         # Pre-generate feedback sounds
         self.start_sound = self.generate_beep(880, 0.1)
@@ -468,26 +481,82 @@ class VoiceTranscriberApp(rumps.App):
         return keys
 
     def setup_model_menu(self):
-        models = [
+        local_models = [
             "mlx-community/whisper-tiny-mlx",
             "mlx-community/whisper-base-mlx",
             "mlx-community/whisper-small-mlx",
             "mlx-community/whisper-large-v3-turbo",
             "mlx-community/whisper-large-v3-turbo-q4"
         ]
+        
+        cloud_models = [
+            "gemini-3-flash-preview"
+        ]
+
         img_model_menu = rumps.MenuItem("Select Model")
-        for m in models:
+        
+        # Local Models Section
+        header_local = rumps.MenuItem("--- Local (MLX) ---")
+        img_model_menu.add(header_local)
+        
+        for m in local_models:
             item = rumps.MenuItem(m, callback=self.change_model)
             if m == self.model_path:
                 item.state = 1
             img_model_menu.add(item)
+        
+        img_model_menu.add(rumps.separator)
+        
+        # Cloud Models Section
+        header_cloud = rumps.MenuItem("--- Cloud (API) ---")
+        img_model_menu.add(header_cloud)
+        
+        for m in cloud_models:
+            item = rumps.MenuItem(m, callback=self.change_model)
+            if m == self.model_path:
+                item.state = 1
+            img_model_menu.add(item)
+            
         self.menu["Model"].add(img_model_menu)
 
     def change_model(self, sender):
+        model_name = sender.title
+        
+        # Si selecciona Gemini, verificar API Key
+        if "gemini" in model_name:
+            if not self.gemini_api_key:
+                # Pedir API Key
+                window = rumps.Window(
+                    title="Gemini API Key",
+                    message="Ingresa tu API Key de Google Gemini:",
+                    default_text="",
+                    ok="Guardar",
+                    cancel="Cancelar",
+                    dimensions=(300, 24)
+                )
+                response = window.run()
+                if response.clicked:
+                    self.gemini_api_key = response.text.strip()
+                    if self.gemini_api_key:
+                        self.config["gemini_api_key"] = self.gemini_api_key
+                        try:
+                            self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+                            rumps.alert("API Key Guardada", "La API Key se ha guardado correctamente.")
+                        except Exception as e:
+                            rumps.alert("Error", f"Error al inicializar cliente: {e}")
+                            return
+                    else:
+                        rumps.alert("Error", "La API Key no puede estar vacía.")
+                        return # No cambiar modelo si cancela o falla
+                else:
+                    return # Cancelado
+        
+        # Actualizar selección en menú
         for item in self.menu["Model"]["Select Model"].values():
             item.state = 0
         sender.state = 1
-        self.model_path = sender.title
+        
+        self.model_path = model_name
         self.config["model"] = self.model_path
         self.save_config()
         print(f"Model switched to: {self.model_path}")
@@ -604,32 +673,84 @@ class VoiceTranscriberApp(rumps.App):
 
     def transcribe_and_paste(self, audio):
         self.is_transcribing = True
+        print("Transcribing...")
+        
+        # Mostrar notificación
+        rumps.notification("Transcibiendo...", "Procesando audio", "Espera un momento")
+        
         try:
-            print("Transcribing...")
-            # Normalize audio to float32 range [-1, 1] if needed, sounddevice usually gives float32
-            # mlx_whisper expects a string file or np array.
+            text = ""
             
-            # Simple VAD/Silence check could go here, but user wants ultra-fast.
-            
-            # Flatten if needed (sounddevice returns [frames, channels])
-            audio_flat = audio.flatten()
-            
-            text = mlx_whisper.transcribe(
-                audio_flat, 
-                path_or_hf_repo=self.model_path,
-                verbose=False
-            )["text"]
-            
-            text = text.strip()
-            print(f"Transcribed: {text}")
+            if "gemini" in self.model_path:
+                print(f"Using Google Gemini API with model: {self.model_path}")
+                if not self.gemini_api_key:
+                    rumps.alert("Error de API Key", "Configura la API Key de Gemini en el menú Model -> Seleccionar Gemini.")
+                    self.is_transcribing = False
+                    self.title = "🎙️"
+                    return
+
+                # Flatten if needed
+                audio_flat = audio.flatten()
+                
+                # Convertir numpy array a bytes PCM int16
+                audio_int16 = (audio_flat * 32767).astype(np.int16)
+                
+                # Crear archivo temporal WAV
+                temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+                wav.write(temp_wav, SAMPLE_RATE, audio_int16)
+                print(f"Saved temp audio to: {temp_wav}")
+                
+                try:
+                    # Initialize client if needed (double check)
+                    if self.gemini_client is None:
+                         self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+
+                    # Subir archivo usando el Client (New SDK)
+                    print("Uploading audio to Gemini...")
+                    # new SDK uses client.files.upload(file=...)
+                    myfile = self.gemini_client.files.upload(file=temp_wav)
+                    
+                    # Generar contenido
+                    target_model = "gemini-1.5-flash" 
+                    if "gemini-3" in self.model_path:
+                         target_model = self.model_path
+                    
+                    print(f"Generating content with model {target_model}...")
+                    
+                    response = self.gemini_client.models.generate_content(
+                        model=target_model,
+                        contents=[myfile, "Transcribe this audio file exactly as spoken."]
+                    )
+                    text = response.text.strip()
+                    print(f"Gemini Transcribed: {text}")
+
+                except Exception as e:
+                    print(f"Gemini Error: {e}")
+                    traceback.print_exc()
+                    # Use notification instead of alert to avoid thread crash
+                    rumps.notification("Error Gemini", "Falló la transcripción", str(e))
+                finally:
+                    if os.path.exists(temp_wav):
+                        os.remove(temp_wav)
+
+            else:
+                # Usar MLX Whisper local
+                # Flatten if needed (sounddevice returns [frames, channels])
+                audio_flat = audio.flatten()
+                
+                text = mlx_whisper.transcribe(
+                    audio_flat, 
+                    path_or_hf_repo=self.model_path,
+                    verbose=False
+                )["text"]
+                text = text.strip()
+                print(f"Transcribed: {text}")
             
             if text:
                 pyperclip.copy(text)
-                # Small delay to ensure clipboard is ready
                 time.sleep(0.2) 
                 
                 print("Pasting...")
-                # Try pasting using AppleScript which is often more reliable on macOS for this
                 try:
                     subprocess.run(
                         ["osascript", "-e", 'tell application "System Events" to keystroke "v" using command down'], 
@@ -639,22 +760,13 @@ class VoiceTranscriberApp(rumps.App):
                     )
                 except subprocess.CalledProcessError as e:
                     print(f"AppleScript paste failed: {e.stderr}")
-                    if "1002" in e.stderr or "permiso" in e.stderr:
-                         rumps.notification(
-                             "⚠️ Faltan Permisos", 
-                             "Error al Pegar", 
-                             "Tu Terminal necesita permisos de 'Accesibilidad' y 'Automatización' para pegar texto. Revisa Ajustes del Sistema > Privacidad."
-                         )
-                    
-                    print("Falling back to pyautogui...")
+                    # Fallback
                     pyautogui.hotkey('command', 'v')
-                except Exception as as_e:
-                    print(f"Unexpected error during paste: {as_e}")
-                    pyautogui.hotkey('command', 'v')
-                
+            
         except Exception as e:
-            print(f"Error during transcription: {e}")
-            rumps.notification("Transcriber Error", "Failed to transcribe", str(e))
+            print(f"Error occurred: {e}")
+            traceback.print_exc()
+            rumps.notification("Error", "An error occurred", str(e))
         finally:
             self.is_transcribing = False
 
