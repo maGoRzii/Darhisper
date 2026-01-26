@@ -21,6 +21,12 @@ from google import genai
 import scipy.io.wavfile as wav
 import tempfile
 import traceback
+from parakeet_mlx import from_pretrained
+from parakeet_mlx.utils import from_config
+from huggingface_hub import hf_hub_download
+from pathlib import Path
+import mlx.core as mx
+from mlx.utils import tree_flatten, tree_unflatten
 
 # Setup debug logging
 logging.basicConfig(
@@ -29,6 +35,16 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logging.info("Darhisper starting up...")
+
+# Hugging Face cache (helps when app launches from Finder)
+HF_CACHE_DIR = os.path.expanduser("~/Library/Caches/huggingface")
+os.environ.setdefault("HF_HOME", HF_CACHE_DIR)
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("LC_ALL", "en_US.UTF-8")
+os.environ.setdefault("LANG", "en_US.UTF-8")
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
 
 
 # Configuration
@@ -55,6 +71,108 @@ Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro",
 
 Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro", ni comillas al principio o final. Solo el texto del audio formateado de la manera que te pide el prompt."""
 }
+
+def load_parakeet_model(hf_id_or_path, cache_dir=HF_CACHE_DIR, dtype=mx.bfloat16):
+    logging.info(f"Loading Parakeet model from {hf_id_or_path} with custom UTF-8 loader")
+    try:
+        config_path = hf_hub_download(hf_id_or_path, "config.json", cache_dir=cache_dir)
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        weight = hf_hub_download(hf_id_or_path, "model.safetensors", cache_dir=cache_dir)
+    except Exception:
+        config_path = Path(hf_id_or_path) / "config.json"
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        weight = str(Path(hf_id_or_path) / "model.safetensors")
+
+    model = from_config(config)
+    model.load_weights(weight)
+
+    curr_weights = dict(tree_flatten(model.parameters()))
+    curr_weights = [(k, v.astype(dtype)) for k, v in curr_weights.items()]
+    model.update(tree_unflatten(curr_weights))
+
+    return model
+
+# Monkeypatch to avoid ffmpeg dependency
+import parakeet_mlx.parakeet
+def custom_load_audio(filename, sampling_rate, dtype=mx.bfloat16):
+    try:
+        logging.info(f"Custom load audio: reading {filename} with scipy")
+        sr, audio = wav.read(str(filename))
+        
+        if sr != sampling_rate:
+            logging.info(f"Resampling audio from {sr} to {sampling_rate}")
+            from scipy import signal
+            num_samples = int(len(audio) * float(sampling_rate) / sr)
+            audio = signal.resample(audio, num_samples)
+            
+        if audio.dtype == np.int16:
+            audio = audio.astype(np.float32) / 32768.0
+        elif audio.dtype == np.float32:
+            pass
+            
+        return mx.array(audio).astype(dtype)
+    except Exception as e:
+        logging.error(f"Error in custom_load_audio: {e}")
+        traceback.print_exc()
+        raise e
+
+parakeet_mlx.parakeet.load_audio = custom_load_audio
+
+# Monkeypatch for get_logmel to fix STFT shape issue
+def custom_get_logmel(x: mx.array, args) -> mx.array:
+    original_dtype = x.dtype
+
+    if args.pad_to > 0:
+        if x.shape[-1] < args.pad_to:
+            pad_length = args.pad_to - x.shape[-1]
+            x = mx.pad(x, ((0, pad_length),), constant_values=args.pad_value)
+
+    if args.preemph is not None:
+        x = mx.concat([x[:1], x[1:] - args.preemph * x[:-1]], axis=0)
+
+    from parakeet_mlx.audio import hanning, hamming, blackman, bartlett, stft
+    
+    window = (
+        hanning(args.win_length).astype(x.dtype)
+        if args.window == "hann" or args.window == "hanning"
+        else hamming(args.win_length).astype(x.dtype)
+        if args.window == "hamming"
+        else blackman(args.win_length).astype(x.dtype)
+        if args.window == "blackman"
+        else bartlett(args.win_length).astype(x.dtype)
+        if args.window == "bartlett"
+        else None
+    )
+    x = stft(x, args.n_fft, args.hop_length, args.win_length, window)
+    
+    # Fix: Modern MLX rfft returns complex array. We compute true magnitude.
+    x = mx.abs(x)
+    
+    if args.mag_power != 1.0:
+        x = mx.power(x, args.mag_power)
+
+    x = mx.matmul(args._filterbanks.astype(x.dtype), x.T)
+    x = mx.log(x + 1e-5)
+
+    if args.normalize == "per_feature":
+        mean = mx.mean(x, axis=1, keepdims=True)
+        std = mx.std(x, axis=1, keepdims=True)
+        normalized_mel = (x - mean) / (std + 1e-5)
+    else:
+        mean = mx.mean(x)
+        std = mx.std(x)
+        normalized_mel = (x - mean) / (std + 1e-5)
+
+    normalized_mel = normalized_mel.T
+    normalized_mel = mx.expand_dims(normalized_mel, axis=0)
+
+    return normalized_mel.astype(original_dtype)
+
+# Apply patches to both locations
+parakeet_mlx.audio.get_logmel = custom_get_logmel
+parakeet_mlx.parakeet.get_logmel = custom_get_logmel
 
 class WaveView(NSView):
     """Vista personalizada que dibuja las ondas de voz"""
@@ -421,6 +539,7 @@ class VoiceTranscriberApp(rumps.App):
         self.gemini_api_key = self.config.get("gemini_api_key", "")
         self.active_prompt_key = self.config.get("active_prompt_key", "Transcripción Literal")
         self.hotkey_check = self.deserialize_hotkey(self.config.get("hotkey", ["Key.f5"]))
+        self.parakeet_model = None
         
         # Configurar Gemini si hay key
         self.gemini_client = None
@@ -509,7 +628,8 @@ class VoiceTranscriberApp(rumps.App):
             "mlx-community/whisper-base-mlx",
             "mlx-community/whisper-small-mlx",
             "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-large-v3-turbo-q4"
+            "mlx-community/whisper-large-v3-turbo-q4",
+            "mlx-community/parakeet-tdt-0.6b-v3"
         ]
         
         cloud_models = [
@@ -759,21 +879,16 @@ class VoiceTranscriberApp(rumps.App):
     def transcribe_and_paste(self, audio):
         self.is_transcribing = True
         print("Transcribing...")
+        logging.info(f"Transcribing with model: {self.model_path}")
         
         # Mostrar notificación
         rumps.notification("Transcibiendo...", "Procesando audio", "Espera un momento")
         
+        temp_wav = None
         try:
             text = ""
-            
-            if "gemini" in self.model_path:
-                print(f"Using Google Gemini API with model: {self.model_path}")
-                if not self.gemini_api_key:
-                    rumps.alert("Error de API Key", "Configura la API Key de Gemini en el menú Model -> Seleccionar Gemini.")
-                    self.is_transcribing = False
-                    self.title = "🎙️"
-                    return
 
+            if "gemini" in self.model_path or "parakeet" in self.model_path:
                 # Flatten if needed
                 audio_flat = audio.flatten()
                 
@@ -784,6 +899,15 @@ class VoiceTranscriberApp(rumps.App):
                 temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
                 wav.write(temp_wav, SAMPLE_RATE, audio_int16)
                 print(f"Saved temp audio to: {temp_wav}")
+                logging.info(f"Temp WAV created: {temp_wav}")
+            
+            if "gemini" in self.model_path:
+                print(f"Using Google Gemini API with model: {self.model_path}")
+                if not self.gemini_api_key:
+                    rumps.alert("Error de API Key", "Configura la API Key de Gemini en el menú Model -> Seleccionar Gemini.")
+                    self.is_transcribing = False
+                    self.title = "🎙️"
+                    return
                 
                 try:
                     # Initialize client if needed (double check)
@@ -817,10 +941,28 @@ class VoiceTranscriberApp(rumps.App):
                     traceback.print_exc()
                     # Use notification instead of alert to avoid thread crash
                     rumps.notification("Error Gemini", "Falló la transcripción", str(e))
-                finally:
-                    if os.path.exists(temp_wav):
-                        os.remove(temp_wav)
-
+            elif "parakeet" in self.model_path:
+                print(f"Using Parakeet model: {self.model_path}")
+                logging.info("Parakeet transcribe start")
+                if self.parakeet_model is None:
+                    logging.info("Loading Parakeet model")
+                    load_start = time.time()
+                    try:
+                        self.parakeet_model = load_parakeet_model(self.model_path)
+                    except Exception as e:
+                        logging.exception("Parakeet model load failed")
+                        rumps.notification("Parakeet Error", "Fallo al cargar modelo", str(e))
+                        return
+                    logging.info(f"Parakeet model loaded in {time.time() - load_start:.2f}s")
+                try:
+                    result = self.parakeet_model.transcribe(temp_wav)
+                except Exception as e:
+                    logging.exception("Parakeet transcribe failed")
+                    rumps.notification("Parakeet Error", "Fallo al transcribir", str(e))
+                    return
+                logging.info("Parakeet transcribe done")
+                text = result.text.strip()
+                print(f"Parakeet Transcribed: {text}")
             else:
                 # Usar MLX Whisper local
                 # Flatten if needed (sounddevice returns [frames, channels])
@@ -856,6 +998,8 @@ class VoiceTranscriberApp(rumps.App):
             traceback.print_exc()
             rumps.notification("Error", "An error occurred", str(e))
         finally:
+            if temp_wav and os.path.exists(temp_wav):
+                os.remove(temp_wav)
             self.is_transcribing = False
 
 if __name__ == "__main__":
