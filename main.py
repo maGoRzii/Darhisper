@@ -15,7 +15,7 @@ import json
 import logging
 import math
 import objc
-from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath
+from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel
 from Quartz import CGRectMake
 from google import genai
 import scipy.io.wavfile as wav
@@ -530,6 +530,9 @@ class VoiceTranscriberApp(rumps.App):
         self.is_learning_hotkey = False
         self.learning_keys = set()
         
+        # Progress tracking for file transcription
+        self.transcription_progress = {"current": 0, "total": 0, "is_file": False}
+        
         # Inicializar ventana de ondas (ahora con PyObjC, no necesita hilo separado)
         self.wave_window = VoiceWaveWindow(self)
         
@@ -540,6 +543,7 @@ class VoiceTranscriberApp(rumps.App):
         self.active_prompt_key = self.config.get("active_prompt_key", "Transcripción Literal")
         self.hotkey_check = self.deserialize_hotkey(self.config.get("hotkey", ["Key.f5"]))
         self.parakeet_model = None
+        self.file_transcription_model = self.config.get("file_transcription_model", "gemini-3-flash-preview")
         
         # Configurar Gemini si hay key
         self.gemini_client = None
@@ -555,6 +559,9 @@ class VoiceTranscriberApp(rumps.App):
         
         # Menu items
         self.menu = [
+            rumps.MenuItem("Transcribir Archivo...", callback=self.select_and_transcribe_file),
+            rumps.MenuItem("Progreso: Listo", icon=None, callback=None),
+            rumps.MenuItem("File Model", icon=None, dimensions=(1, 1)),
             rumps.MenuItem("Model", icon=None, dimensions=(1, 1)),
             rumps.MenuItem("Mode", icon=None, dimensions=(1, 1)),
             rumps.MenuItem("Shortcut", icon=None, dimensions=(1, 1)),
@@ -566,10 +573,25 @@ class VoiceTranscriberApp(rumps.App):
         
         # Submenus
         self.setup_model_menu()
+        self.setup_file_model_menu()
         self.setup_prompts_menu()
         self.setup_shortcut_menu()
         
         self.setup_hotkey_listener()
+        
+        # Timer for updating progress UI
+        self.progress_timer = rumps.Timer(self.update_progress_ui, 0.5)
+        self.progress_timer.start()
+
+    def update_progress_ui(self, sender):
+        """Update the progress indicator in the menu"""
+        if self.transcription_progress["is_file"]:
+            current = self.transcription_progress["current"]
+            total = self.transcription_progress["total"]
+            percentage = int((current / total) * 100) if total > 0 else 0
+            self.menu["Progreso: Listo"].title = f"Progreso: {current}/{total} ({percentage}%)"
+        else:
+            self.menu["Progreso: Listo"].title = "Progreso: Listo"
 
     def generate_beep(self, frequency, duration=0.1, fs=SAMPLE_RATE):
         t = np.linspace(0, duration, int(fs * duration), False)
@@ -669,6 +691,38 @@ class VoiceTranscriberApp(rumps.App):
         img_model_menu.add(rumps.MenuItem("Edit Gemini API Key", callback=self.edit_gemini_key))
             
         self.menu["Model"].add(img_model_menu)
+
+    def setup_file_model_menu(self):
+        file_models = [
+            "gemini-3-flash-preview",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "parakeet-tdt-0.6b-v3"
+        ]
+        
+        file_model_menu = rumps.MenuItem("Select File Model")
+        
+        for model in file_models:
+            item = rumps.MenuItem(model, callback=self.change_file_model)
+            if model == self.file_transcription_model:
+                item.state = 1
+            file_model_menu.add(item)
+        
+        self.menu["File Model"].add(file_model_menu)
+
+    def change_file_model(self, sender):
+        model_name = sender.title
+        
+        # Update menu selection
+        for item in self.menu["File Model"]["Select File Model"].values():
+            item.state = 0
+        sender.state = 1
+        
+        self.file_transcription_model = model_name
+        self.config["file_transcription_model"] = self.file_transcription_model
+        self.save_config()
+        print(f"File transcription model changed to: {self.file_transcription_model}")
+        rumps.notification("Darhisper", "Modelo de archivos actualizado", f"Usando: {model_name}")
 
     def edit_gemini_key(self, sender):
         window = rumps.Window(
@@ -875,6 +929,321 @@ class VoiceTranscriberApp(rumps.App):
                     
                 if audio is not None:
                     threading.Thread(target=self.transcribe_and_paste, args=(audio,)).start()
+
+    def convert_audio_to_wav(self, input_path):
+        """Convert audio file to WAV format compatible with Parakeet (16kHz, mono, PCM 16-bit)"""
+        logging.info(f"Converting audio file: {input_path}")
+        
+        temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+        
+        try:
+            # Use ffmpeg to convert to 16kHz mono WAV with PCM 16-bit
+            cmd = [
+                'ffmpeg',
+                '-i', input_path,
+                '-ar', '16000',
+                '-ac', '1',
+                '-c:a', 'pcm_s16le',
+                '-y',  # Overwrite output file
+                temp_wav
+            ]
+            
+            logging.info(f"Running ffmpeg command: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout for conversion
+            )
+            
+            if result.returncode != 0:
+                logging.error(f"ffmpeg failed: {result.stderr}")
+                raise Exception(f"Error converting audio: {result.stderr}")
+            
+            if not os.path.exists(temp_wav):
+                raise Exception("Output WAV file was not created")
+            
+            logging.info(f"Successfully converted to: {temp_wav}")
+            return temp_wav
+            
+        except subprocess.TimeoutExpired:
+            raise Exception("Audio conversion timed out (file may be too large)")
+        except FileNotFoundError:
+            raise Exception("ffmpeg not found. Please install ffmpeg: brew install ffmpeg")
+        except Exception as e:
+            logging.error(f"Error converting audio: {e}")
+            if os.path.exists(temp_wav):
+                os.remove(temp_wav)
+            raise e
+
+    def transcribe_with_gemini_chunks(self, wav_path, chunk_duration=300):
+        """Transcribe long audio files with Gemini API using chunks to handle duration limits"""
+        logging.info(f"Transcribing with Gemini using chunks of {chunk_duration}s")
+        
+        try:
+            sr, audio = wav.read(wav_path)
+            
+            # Calculate chunk size in samples
+            chunk_samples = int(chunk_duration * sr)
+            total_samples = len(audio)
+            num_chunks = math.ceil(total_samples / chunk_samples)
+            
+            logging.info(f"Audio duration: {total_samples/sr:.2f}s, Chunks: {num_chunks}")
+            
+            # Initialize progress
+            self.transcription_progress["current"] = 0
+            self.transcription_progress["total"] = num_chunks
+            self.transcription_progress["is_file"] = True
+            
+            full_transcription = []
+            
+            # Get transcription prompt
+            transcription_prompt = SMART_PROMPTS.get(self.active_prompt_key, SMART_PROMPTS["Transcripción Literal"])
+            
+            for i in range(num_chunks):
+                start_idx = i * chunk_samples
+                end_idx = min((i + 1) * chunk_samples, total_samples)
+                chunk_audio = audio[start_idx:end_idx]
+                
+                # Skip very short chunks
+                if len(chunk_audio) < sr:  # Less than 1 second
+                    self.transcription_progress["current"] = i + 1
+                    continue
+                
+                logging.info(f"Processing Gemini chunk {i+1}/{num_chunks} ({len(chunk_audio)/sr:.2f}s)")
+                
+                # Save chunk to temp file
+                chunk_temp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+                wav.write(chunk_temp, sr, chunk_audio)
+                
+                try:
+                    # Upload chunk to Gemini
+                    logging.info(f"Uploading chunk {i+1}/{num_chunks} to Gemini...")
+                    myfile = self.gemini_client.files.upload(file=chunk_temp)
+                    
+                    # Transcribe this chunk
+                    logging.info(f"Transcribing chunk {i+1}/{num_chunks}...")
+                    response = self.gemini_client.models.generate_content(
+                        model=self.file_transcription_model,
+                        contents=[myfile, transcription_prompt]
+                    )
+                    
+                    chunk_text = response.text.strip()
+                    
+                    if chunk_text:
+                        full_transcription.append(chunk_text)
+                        logging.info(f"Chunk {i+1}: {chunk_text[:100]}...")
+                    
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(chunk_temp):
+                        os.remove(chunk_temp)
+                    # Update progress
+                    self.transcription_progress["current"] = i + 1
+            
+            # Combine all chunks with proper spacing
+            combined_text = ' '.join(full_transcription).strip()
+            logging.info(f"Combined transcription length: {len(combined_text)} chars")
+            
+            return combined_text
+            
+        except Exception as e:
+            logging.error(f"Error in transcribe_with_gemini_chunks: {e}")
+            traceback.print_exc()
+            raise e
+
+    def transcribe_long_audio(self, wav_path, chunk_duration=30):
+        """Transcribe long audio files by processing in chunks to avoid memory overflow"""
+        logging.info(f"Transcribing long audio with chunks of {chunk_duration}s")
+        
+        try:
+            sr, audio = wav.read(wav_path)
+            
+            # Calculate chunk size in samples
+            chunk_samples = int(chunk_duration * sr)
+            total_samples = len(audio)
+            num_chunks = math.ceil(total_samples / chunk_samples)
+            
+            logging.info(f"Audio duration: {total_samples/sr:.2f}s, Chunks: {num_chunks}")
+            
+            # Initialize progress
+            self.transcription_progress["current"] = 0
+            self.transcription_progress["total"] = num_chunks
+            self.transcription_progress["is_file"] = True
+            
+            full_transcription = []
+            
+            for i in range(num_chunks):
+                start_idx = i * chunk_samples
+                end_idx = min((i + 1) * chunk_samples, total_samples)
+                chunk_audio = audio[start_idx:end_idx]
+                
+                # Skip very short chunks
+                if len(chunk_audio) < sr:  # Less than 1 second
+                    self.transcription_progress["current"] = i + 1
+                    continue
+                
+                logging.info(f"Processing chunk {i+1}/{num_chunks} ({len(chunk_audio)/sr:.2f}s)")
+                
+                # Save chunk to temp file
+                chunk_temp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
+                wav.write(chunk_temp, sr, chunk_audio)
+                
+                try:
+                    # Transcribe this chunk
+                    result = self.parakeet_model.transcribe(chunk_temp)
+                    chunk_text = result.text.strip()
+                    
+                    if chunk_text:
+                        full_transcription.append(chunk_text)
+                        logging.info(f"Chunk {i+1}: {chunk_text[:100]}...")
+                    
+                finally:
+                    if os.path.exists(chunk_temp):
+                        os.remove(chunk_temp)
+                    # Update progress
+                    self.transcription_progress["current"] = i + 1
+            
+            # Combine all chunks with proper spacing
+            combined_text = ' '.join(full_transcription).strip()
+            logging.info(f"Combined transcription length: {len(combined_text)} chars")
+            
+            return combined_text
+            
+        except Exception as e:
+            logging.error(f"Error in transcribe_long_audio: {e}")
+            traceback.print_exc()
+            raise e
+
+    def select_and_transcribe_file(self, sender):
+        """Open file dialog and start transcription thread"""
+        panel = NSOpenPanel.alloc().init()
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setAllowedFileTypes_(['mp3', 'wav', 'm4a', 'ogg', 'qta'])
+        
+        response = panel.runModal()
+        
+        if response == 1:  # OK button pressed
+            selected_file = panel.URLs()[0].path()
+            if selected_file:
+                logging.info(f"Selected file for transcription: {selected_file}")
+                # Start transcription in a separate thread
+                threading.Thread(
+                    target=self._transcribe_file_thread,
+                    args=(selected_file,),
+                    daemon=True
+                ).start()
+
+    def _transcribe_file_thread(self, file_path):
+        """Thread function to transcribe an audio file"""
+        self.is_transcribing = True
+        logging.info(f"Starting transcription of file: {file_path}")
+        
+        # Show start notification
+        rumps.notification("Darhisper", "Procesando archivo", "Esto puede tardar unos minutos")
+        
+        # Show wave window to indicate processing
+        self.wave_window.show()
+        
+        temp_wav = None
+        try:
+            # Check which model to use for file transcription
+            if "gemini" in self.file_transcription_model:
+                # Use Gemini API for transcription
+                logging.info(f"Using Gemini model: {self.file_transcription_model}")
+                
+                if not self.gemini_api_key:
+                    rumps.notification("Error", "API Key no configurada", "Configura la API Key de Gemini en el menú Model -> Select Model -> Edit Gemini API Key")
+                    return
+                
+                if self.gemini_client is None:
+                    try:
+                        self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+                    except Exception as e:
+                        rumps.notification("Error", "Fallo al inicializar cliente Gemini", str(e))
+                        return
+                
+                # Convert audio to WAV format
+                temp_wav = self.convert_audio_to_wav(file_path)
+                
+                # Transcribe using chunks (5 minutes per chunk to avoid Gemini limits)
+                logging.info("Starting Gemini transcription with chunks")
+                transcribe_start = time.time()
+                text = self.transcribe_with_gemini_chunks(temp_wav, chunk_duration=300)
+                transcribe_time = time.time() - transcribe_start
+                logging.info(f"Gemini transcription completed in {transcribe_time:.2f}s")
+                
+            elif "parakeet" in self.file_transcription_model:
+                # Use Parakeet model
+                logging.info("Using Parakeet model for file transcription")
+                
+                # Load Parakeet model if not already loaded
+                if self.parakeet_model is None:
+                    logging.info("Loading Parakeet model for file transcription")
+                    load_start = time.time()
+                    try:
+                        self.parakeet_model = load_parakeet_model(self.file_transcription_model)
+                    except Exception as e:
+                        logging.exception("Parakeet model load failed")
+                        rumps.notification("Error", "Fallo al cargar modelo", str(e))
+                        return
+                    logging.info(f"Parakeet model loaded in {time.time() - load_start:.2f}s")
+                
+                # Convert audio file to WAV
+                temp_wav = self.convert_audio_to_wav(file_path)
+                
+                # Transcribe using chunked processing for long files
+                logging.info("Starting Parakeet transcription")
+                transcribe_start = time.time()
+                text = self.transcribe_long_audio(temp_wav, chunk_duration=30)
+                transcribe_time = time.time() - transcribe_start
+            else:
+                rumps.notification("Error", "Modelo no soportado", f"El modelo {self.file_transcription_model} no está soportado")
+                return
+            
+            logging.info(f"Transcription completed in {transcribe_time:.2f}s")
+            print(f"Transcribed text: {text[:200]}..." if len(text) > 200 else f"Transcribed text: {text}")
+            
+            if text:
+                # Copy to clipboard
+                pyperclip.copy(text)
+                time.sleep(0.2)
+                
+                # Save to .txt file in same folder as original audio
+                try:
+                    txt_path = os.path.splitext(file_path)[0] + '.txt'
+                    with open(txt_path, 'w', encoding='utf-8') as f:
+                        f.write(text)
+                    logging.info(f"Saved transcription to: {txt_path}")
+                except Exception as e:
+                    logging.error(f"Failed to save .txt file: {e}")
+                
+                # Show completion notification
+                rumps.notification("Darhisper", "Transcripción completada", f"Texto copiado y guardado en {os.path.basename(txt_path)}")
+            else:
+                rumps.notification("Darhisper", "Atención", "No se detectó texto en el audio")
+            
+        except Exception as e:
+            logging.error(f"Error transcribing file: {e}")
+            traceback.print_exc()
+            rumps.notification("Error", "Fallo en la transcripción", str(e))
+        finally:
+            # Hide wave window
+            self.wave_window.hide()
+            
+            # Clean up temp file
+            if temp_wav and os.path.exists(temp_wav):
+                os.remove(temp_wav)
+                logging.info(f"Cleaned up temp file: {temp_wav}")
+            
+            # Reset progress
+            self.transcription_progress["is_file"] = False
+            self.transcription_progress["current"] = 0
+            self.transcription_progress["total"] = 0
+            
+            self.is_transcribing = False
 
     def transcribe_and_paste(self, audio):
         self.is_transcribing = True
