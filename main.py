@@ -11,6 +11,7 @@ import pyautogui
 from pynput import keyboard
 import subprocess
 import os
+import shutil
 import json
 import logging
 import math
@@ -47,6 +48,14 @@ os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("LC_ALL", "en_US.UTF-8")
 os.environ.setdefault("LANG", "en_US.UTF-8")
 os.makedirs(HF_CACHE_DIR, exist_ok=True)
+
+# Ensure common Homebrew paths are available when launched from Finder
+_extra_paths = ["/opt/homebrew/bin", "/usr/local/bin"]
+_current_path = os.environ.get("PATH", "")
+for _path in _extra_paths:
+    if _path not in _current_path:
+        _current_path = f"{_path}:{_current_path}" if _current_path else _path
+os.environ["PATH"] = _current_path
 
 
 # Configuration
@@ -516,7 +525,7 @@ class DarhisperInterface(NSObject):
         
     def _create_window(self):
         """Create the main window with dark vibrant appearance"""
-        rect = NSMakeRect(100, 100, 720, 800)
+        rect = NSMakeRect(100, 100, 720, 780)
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect,
             15,  # NSClosableWindowMask | NSTitledWindowMask | NSMiniaturizableWindowMask
@@ -578,7 +587,7 @@ class DarhisperInterface(NSObject):
         content_view = self.visual_effect_view
         
         # Header
-        header_y = 740
+        header_y = 730
         title_label = self._create_label("🎙️ DARHISPER", NSMakeRect(20, header_y, 680, 40), size=24, weight="bold", align=1)
         content_view.addSubview_(title_label)
         
@@ -587,10 +596,11 @@ class DarhisperInterface(NSObject):
         content_view.addSubview_(subtitle_label)
         
         # --- Section: File Transcription ---
-        file_section = self._create_card(NSMakeRect(20, 560, 680, 140), "TRANSCRIPCIÓN DE ARCHIVO")
+        # Y=570, Height 140. Occupies [570, 710]. Gap to Header (730) OK.
+        file_section = self._create_card(NSMakeRect(20, 570, 680, 140), "TRANSCRIPCIÓN DE ARCHIVO")
         
-        # Select File Button
-        self.select_file_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 85, 160, 32))
+        # Select File Button - Y=75. Top=107. Box Top=140. Clearance=33. Safe.
+        self.select_file_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 75, 160, 32))
         self.select_file_btn.setBezelStyle_(11) # NSBezelStyleRounded
         self.select_file_btn.setTitle_("📁 Elegir Archivo...")
         self.select_file_btn.setTarget_(self)
@@ -598,7 +608,7 @@ class DarhisperInterface(NSObject):
         file_section.addSubview_(self.select_file_btn)
         
         # File Path Display
-        self.file_path_text = NSTextField.alloc().initWithFrame_(NSMakeRect(185, 87, 470, 28))
+        self.file_path_text = NSTextField.alloc().initWithFrame_(NSMakeRect(185, 75, 470, 32))
         self.file_path_text.setStringValue_("Ningún archivo seleccionado")
         self.file_path_text.setBezeled_(False)
         self.file_path_text.setDrawsBackground_(True)
@@ -606,7 +616,7 @@ class DarhisperInterface(NSObject):
         self.file_path_text.setEditable_(False)
         self.file_path_text.setCornerRadius_(6)
         self.file_path_text.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.5))
-        self.file_path_text.setFont_(NSFont.userFixedPitchFontOfSize_(11))
+        self.file_path_text.setFont_(NSFont.userFixedPitchFontOfSize_(12))
         file_section.addSubview_(self.file_path_text)
         
         # Transcribe Button (Highlighted)
@@ -616,15 +626,16 @@ class DarhisperInterface(NSObject):
         self.transcribe_btn.setTarget_(self)
         self.transcribe_btn.setAction_("startTranscription:")
         self.transcribe_btn.setEnabled_(False)
-        # We can't easily change button colors in native AppKit without subclasses, but we'll use a standard style
         file_section.addSubview_(self.transcribe_btn)
         
         content_view.addSubview_(file_section)
         
         # --- Section: Progress ---
+        # Y=480. Height 70. Occupies [480, 550]. Gap to File=20.
         progress_section = self._create_card(NSMakeRect(20, 480, 680, 70), "PROGRESO")
         
-        self.progress_bar = NSProgressIndicator.alloc().initWithFrame_(NSMakeRect(15, 25, 600, 20))
+        # Lowered to Y=20 to give more top clearance (Title).
+        self.progress_bar = NSProgressIndicator.alloc().initWithFrame_(NSMakeRect(15, 20, 560, 20))
         self.progress_bar.setMinValue_(0)
         self.progress_bar.setMaxValue_(100)
         self.progress_bar.setIndeterminate_(False)
@@ -632,61 +643,68 @@ class DarhisperInterface(NSObject):
         self.progress_bar.setStyle_(1) # NSProgressIndicatorStyleBar
         progress_section.addSubview_(self.progress_bar)
         
-        self.progress_text = self._create_label("0%", NSMakeRect(620, 25, 45, 20), size=12, weight="bold", align=2)
+        self.progress_text = self._create_label("0%", NSMakeRect(585, 20, 80, 20), size=12, weight="bold", align=2)
         progress_section.addSubview_(self.progress_text)
         
         content_view.addSubview_(progress_section)
         
-        # --- Section: Configuration ---
-        config_section = self._create_card(NSMakeRect(20, 310, 680, 160), "CONFIGURACIÓN")
+        # --- Section: Configuration (Redesigned: Labels above Controls) ---
+        # Y=290. Height 170. Occupies [290, 460]. Gap to Progress=20.
+        config_section = self._create_card(NSMakeRect(20, 290, 680, 170), "CONFIGURACIÓN")
         
-        # Grid layout for popups
-        popup_width = 180
-        label_width = 130
+        col1_x = 20
+        col2_x = 350
+        control_width = 310
         
         # Row 1: Models
-        config_section.addSubview_(self._create_label("Modelo Micrófono:", NSMakeRect(15, 115, label_width, 20)))
-        self.live_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(150, 113, 180, 25))
+        # Labels
+        config_section.addSubview_(self._create_label("Modelo Micrófono:", NSMakeRect(col1_x, 135, control_width, 18)))
+        config_section.addSubview_(self._create_label("Modelo Archivo:", NSMakeRect(col2_x, 135, control_width, 18)))
         
-        config_section.addSubview_(self._create_label("Modelo Archivo:", NSMakeRect(350, 115, label_width, 20)))
-        self.file_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(485, 113, 180, 25))
+        # Controls (Below labels)
+        self.live_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(col1_x, 110, control_width, 26))
+        self.file_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(col2_x, 110, control_width, 26))
         
         # Row 2: Mode & Shortcut
-        config_section.addSubview_(self._create_label("Modo de IA:", NSMakeRect(15, 75, label_width, 20)))
-        self.mode_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(150, 73, 180, 25))
+        # Labels
+        config_section.addSubview_(self._create_label("Modo de IA:", NSMakeRect(col1_x, 80, control_width, 18)))
+        config_section.addSubview_(self._create_label("Atajo Global:", NSMakeRect(col2_x, 80, control_width, 18)))
         
-        config_section.addSubview_(self._create_label("Atajo Global:", NSMakeRect(350, 75, label_width, 20)))
-        self.shortcut_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(485, 73, 180, 25))
+        # Controls
+        self.mode_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(col1_x, 55, control_width, 26))
+        self.shortcut_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(col2_x, 55, control_width, 26))
         
-        # Populate popups (logic remains same)
+        # Add to view
+        config_section.addSubview_(self.live_model_popup)
+        config_section.addSubview_(self.file_model_popup)
+        config_section.addSubview_(self.mode_popup)
+        config_section.addSubview_(self.shortcut_popup)
+        
+        # Populate popups
         for m in ["mlx-community/whisper-tiny-mlx", "mlx-community/whisper-base-mlx", "mlx-community/whisper-small-mlx", 
                   "mlx-community/whisper-large-v3-turbo", "mlx-community/whisper-large-v3-turbo-q4", 
                   "mlx-community/parakeet-tdt-0.6b-v3", "gemini-3-flash-preview"]:
             self.live_model_popup.addItemWithTitle_(m)
         self.live_model_popup.setTarget_(self)
         self.live_model_popup.setAction_("changeLiveModel:")
-        config_section.addSubview_(self.live_model_popup)
         
         for m in ["gemini-3-flash-preview", "parakeet-tdt-0.6b-v3"]:
             self.file_model_popup.addItemWithTitle_(m)
         self.file_model_popup.setTarget_(self)
         self.file_model_popup.setAction_("changeFileModel:")
-        config_section.addSubview_(self.file_model_popup)
         
         for p in SMART_PROMPTS.keys():
             self.mode_popup.addItemWithTitle_(p)
         self.mode_popup.setTarget_(self)
         self.mode_popup.setAction_("changeMode:")
-        config_section.addSubview_(self.mode_popup)
         
         for s in ["F5", "Cmd+Opt+R", "Right Option"]:
             self.shortcut_popup.addItemWithTitle_(s)
         self.shortcut_popup.setTarget_(self)
         self.shortcut_popup.setAction_("changeShortcut:")
-        config_section.addSubview_(self.shortcut_popup)
         
-        # API Key Button
-        self.api_key_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 15, 650, 32))
+        # API Key Button (Bottom centered)
+        self.api_key_btn = NSButton.alloc().initWithFrame_(NSMakeRect(col1_x, 15, 640, 32))
         self.api_key_btn.setBezelStyle_(11)
         self.api_key_btn.setTitle_("🔐 Configurar API Key de Gemini...")
         self.api_key_btn.setTarget_(self)
@@ -696,9 +714,12 @@ class DarhisperInterface(NSObject):
         content_view.addSubview_(config_section)
         
         # --- Section: Transcription ---
-        output_section = self._create_card(NSMakeRect(20, 20, 680, 280), "TRANSCRIPCIÓN")
+        # Y=20. Height 250. Occupies [20, 270]. Gap to Config=20.
+        output_section = self._create_card(NSMakeRect(20, 20, 680, 250), "TRANSCRIPCIÓN")
         
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(15, 60, 650, 190))
+        # ScrollView reduced height for title clearance
+        # Y=60. H=160. Top=220. Box Top=250. Clearance=30px.
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(15, 60, 650, 160))
         scroll.setBorderType_(0)
         scroll.setHasVerticalScroller_(True)
         scroll.setDrawsBackground_(False)
@@ -1279,9 +1300,20 @@ class VoiceTranscriberApp(rumps.App):
         temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False).name
         
         try:
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                 # Fallback for common locations if which fails in app bundle
+                 for p in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]:
+                     if os.path.exists(p):
+                         ffmpeg_path = p
+                         break
+            
+            if not ffmpeg_path:
+                raise Exception("ffmpeg not found. Please install ffmpeg: brew install ffmpeg")
+
             # Use ffmpeg to convert to 16kHz mono WAV with PCM 16-bit
             cmd = [
-                'ffmpeg',
+                ffmpeg_path,
                 '-i', input_path,
                 '-ar', '16000',
                 '-ac', '1',
@@ -1290,11 +1322,13 @@ class VoiceTranscriberApp(rumps.App):
                 temp_wav
             ]
             
-            logging.info(f"Running ffmpeg command: {' '.join(cmd)}")
+            logging.info(f"Running ffmpeg command: {cmd}")
+            # Explicitly handle encoding to avoid UnicodeDecodeError in restricted environments
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=300  # 5 minute timeout for conversion
             )
             
@@ -1310,8 +1344,7 @@ class VoiceTranscriberApp(rumps.App):
             
         except subprocess.TimeoutExpired:
             raise Exception("Audio conversion timed out (file may be too large)")
-        except FileNotFoundError:
-            raise Exception("ffmpeg not found. Please install ffmpeg: brew install ffmpeg")
+            raise Exception("ffmpeg not found and librosa fallback failed")
         except Exception as e:
             logging.error(f"Error converting audio: {e}")
             if os.path.exists(temp_wav):
@@ -1518,7 +1551,15 @@ class VoiceTranscriberApp(rumps.App):
                 # Transcribe using chunked processing for long files
                 logging.info("Starting Parakeet transcription")
                 transcribe_start = time.time()
-                text = self.transcribe_long_audio(temp_wav, chunk_duration=30)
+                try:
+                    text = self.transcribe_long_audio(temp_wav, chunk_duration=30)
+                except Exception as e:
+                    error_text = str(e)
+                    if "metal::malloc" in error_text or "maximum allowed buffer size" in error_text:
+                        logging.warning("Parakeet OOM during file transcription, retrying with smaller chunks")
+                        text = self.transcribe_long_audio(temp_wav, chunk_duration=15)
+                    else:
+                        raise
                 transcribe_time = time.time() - transcribe_start
             else:
                 rumps.notification("Error", "Modelo no soportado", f"El modelo {self.file_transcription_model} no está soportado")
