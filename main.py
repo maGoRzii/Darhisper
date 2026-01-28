@@ -16,7 +16,7 @@ import logging
 import math
 import objc
 from objc import IBAction
-from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel, NSButton, NSPopUpButton, NSProgressIndicator, NSTextField, NSScrollView, NSTextView, NSObject, NSFont
+from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel, NSButton, NSPopUpButton, NSProgressIndicator, NSTextField, NSScrollView, NSTextView, NSObject, NSFont, NSImage, NSBitmapImageRep, NSPNGFileType, NSMakeSize
 from AppKit import NSVisualEffectView, NSVisualEffectMaterialDark, NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateActive, NSAppearance, NSAppearanceNameVibrantDark, NSBox, NSNoBorder, NSLineBorder, NSBezelBorder
 from Quartz import CGRectMake
 from google import genai
@@ -1111,7 +1111,7 @@ class VoiceTranscriberApp(rumps.App):
                 
                 # Reset UI
                 self.is_learning_hotkey = False
-                self.title = "🎙️"
+                self.title = ""
                 rumps.notification("Darhisper", "Shortcut Saved", "New shortcut has been saved.")
                 
                 # Update menu state (clear others)
@@ -1144,7 +1144,7 @@ class VoiceTranscriberApp(rumps.App):
     def start_learning_hotkey(self):
         self.is_learning_hotkey = True
         self.learning_keys = set()
-        self.title = "⌨️"
+        self.title = ""
         rumps.notification("Darhisper", "Recording Shortcut", "Press your desired key combination now.")
     
     def generate_beep(self, frequency, duration=0.1, fs=SAMPLE_RATE):
@@ -1157,8 +1157,50 @@ class VoiceTranscriberApp(rumps.App):
             np.linspace(1, 0, int(fs * 0.01))
         ])
         return (tone * envelope).astype(np.float32)
+
+    def _ensure_status_icon(self):
+        icon_dir = os.path.expanduser("~/.darhisper_assets")
+        os.makedirs(icon_dir, exist_ok=True)
+        icon_path = os.path.join(icon_dir, "status_mic.png")
+        if os.path.exists(icon_path):
+            return icon_path
+
+        size = NSMakeSize(18, 18)
+        image = NSImage.alloc().initWithSize_(size)
+        image.lockFocus()
+
+        NSColor.clearColor().set()
+        NSBezierPath.bezierPathWithRect_(NSMakeRect(0, 0, 18, 18)).fill()
+
+        NSColor.whiteColor().set()
+        body = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(6, 5, 6, 9), 3, 3)
+        body.fill()
+        stem = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(8, 3, 2, 3), 1, 1)
+        stem.fill()
+        base = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(5, 1, 8, 2), 1, 1)
+        base.fill()
+
+        image.unlockFocus()
+
+        tiff = image.TIFFRepresentation()
+        if not tiff:
+            return None
+        rep = NSBitmapImageRep.imageRepWithData_(tiff)
+        if not rep:
+            return None
+        png_data = rep.representationUsingType_properties_(NSPNGFileType, None)
+        if not png_data:
+            return None
+        png_data.writeToFile_atomically_(icon_path, True)
+        return icon_path
     def __init__(self):
-        super(VoiceTranscriberApp, self).__init__("🎙️")
+        super(VoiceTranscriberApp, self).__init__("")
+        icon_path = self._ensure_status_icon()
+        if icon_path:
+            self.icon = icon_path
+            self.template = True
+        self.title = ""
+
         self.recorder = AudioRecorder()
         self.is_transcribing = False
         self.is_learning_hotkey = False
@@ -1558,7 +1600,7 @@ class VoiceTranscriberApp(rumps.App):
                 if not self.gemini_api_key:
                     rumps.alert("Error de API Key", "Configura la API Key de Gemini en el menú Model -> Seleccionar Gemini.")
                     self.is_transcribing = False
-                    self.title = "🎙️"
+                    self.title = ""
                     return
                 
                 try:
