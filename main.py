@@ -764,6 +764,9 @@ class DarhisperInterface(NSObject):
         """Show window"""
         if self.window:
             self.window.makeKeyAndOrderFront_(None)
+            self.window.orderFrontRegardless()
+            from AppKit import NSApp
+            NSApp.activateIgnoringOtherApps_(True)
     
     @IBAction
     def selectFile_(self, sender):
