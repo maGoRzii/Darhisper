@@ -15,7 +15,8 @@ import json
 import logging
 import math
 import objc
-from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel
+from objc import IBAction
+from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel, NSButton, NSPopUpButton, NSProgressIndicator, NSTextField, NSScrollView, NSTextView, NSObject, NSFont
 from Quartz import CGRectMake
 from google import genai
 import scipy.io.wavfile as wav
@@ -483,6 +484,528 @@ class VoiceWaveWindow:
         self._recording_pending = True
 
 
+class DarhisperInterface(NSObject):
+    """Main Darhisper interface window with all options"""
+    
+    def init(self):
+        self = objc.super(DarhisperInterface, self).init()
+        if self is None:
+            return None
+        
+        self.app = None
+        self.window = None
+        self.selected_file = None
+        
+        # UI Components
+        self.file_path_text = None
+        self.file_model_popup = None
+        self.model_popup = None
+        self.mode_popup = None
+        self.shortcut_popup = None
+        self.progress_bar = None
+        self.progress_text = None
+        self.transcription_view = None
+        
+        return self
+    
+    def setupInterface_(self, app):
+        """Setup interface with app reference"""
+        self.app = app
+        self._create_window()
+        self._setup_ui()
+        
+    def _create_window(self):
+        """Create the main window"""
+        rect = NSMakeRect(100, 100, 700, 750)
+        self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            rect,
+            15,  # NSClosableWindowMask | NSTitledWindowMask | NSMiniaturizableWindowMask
+            2,   # NSBackingStoreBuffered
+            False
+        )
+        
+        self.window.setTitle_("Darhisper")
+        self.window.setReleasedWhenClosed_(False)
+        self.window.center()
+    
+    def _setup_ui(self):
+        """Setup all UI components"""
+        from AppKit import NSScrollView, NSTextView
+        
+        # Y position for next element
+        y_pos = 680
+        
+        # Title
+        title_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 30))
+        title_label.setStringValue_("🎙️ Darhisper - Transcripción de Audio")
+        title_label.setBezeled_(False)
+        title_label.setDrawsBackground_(False)
+        title_label.setEditable_(False)
+        title_label.setFont_(NSFont.systemFontOfSize_(18))
+        title_label.setAlignment_(1)  # Center
+        self.window.contentView().addSubview_(title_label)
+        y_pos -= 50
+        
+        # File Selection Section
+        file_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
+        file_label.setStringValue_("📁 Archivo de Audio:")
+        file_label.setBezeled_(False)
+        file_label.setDrawsBackground_(False)
+        file_label.setEditable_(False)
+        self.window.contentView().addSubview_(file_label)
+        y_pos -= 30
+        
+        # Select File Button
+        self.select_file_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 35))
+        self.select_file_btn.setBezelStyle_(4)  # NSRoundedBezelStyle
+        self.select_file_btn.setTitle_("Seleccionar Archivo")
+        self.select_file_btn.setTarget_(self)
+        self.select_file_btn.setAction_("selectFile:")
+        self.window.contentView().addSubview_(self.select_file_btn)
+        
+        # File Path Display
+        self.file_path_text = NSTextField.alloc().initWithFrame_(NSMakeRect(180, y_pos, 500, 35))
+        self.file_path_text.setStringValue_("Ningún archivo seleccionado")
+        self.file_path_text.setBezeled_(True)
+        self.file_path_text.setEditable_(False)
+        self.file_path_text.setTextColor_(NSColor.grayColor())
+        self.window.contentView().addSubview_(self.file_path_text)
+        y_pos -= 50
+        
+        # Transcribe Button
+        self.transcribe_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 45))
+        self.transcribe_btn.setBezelStyle_(1)  # NSRegularSquareBezelStyle
+        self.transcribe_btn.setTitle_("▶️ Transcribir Archivo")
+        self.transcribe_btn.setTarget_(self)
+        self.transcribe_btn.setAction_("startTranscription:")
+        self.transcribe_btn.setEnabled_(False)
+        self.window.contentView().addSubview_(self.transcribe_btn)
+        y_pos -= 60
+        
+        # Progress Section
+        progress_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
+        progress_label.setStringValue_("📊 Progreso:")
+        progress_label.setBezeled_(False)
+        progress_label.setDrawsBackground_(False)
+        progress_label.setEditable_(False)
+        self.window.contentView().addSubview_(progress_label)
+        y_pos -= 30
+        
+        # Progress Bar
+        self.progress_bar = NSProgressIndicator.alloc().initWithFrame_(NSMakeRect(20, y_pos, 600, 25))
+        self.progress_bar.setMinValue_(0)
+        self.progress_bar.setMaxValue_(100)
+        self.progress_bar.setIndeterminate_(False)
+        self.progress_bar.setDisplayedWhenStopped_(True)
+        self.window.contentView().addSubview_(self.progress_bar)
+        
+        # Progress Text
+        self.progress_text = NSTextField.alloc().initWithFrame_(NSMakeRect(630, y_pos, 50, 25))
+        self.progress_text.setStringValue_("0%")
+        self.progress_text.setBezeled_(False)
+        self.progress_text.setDrawsBackground_(False)
+        self.progress_text.setEditable_(False)
+        self.progress_text.setAlignment_(1)
+        self.window.contentView().addSubview_(self.progress_text)
+        y_pos -= 50
+        
+        # Model Selection Section
+        models_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
+        models_label.setStringValue_("⚙️ Configuración:")
+        models_label.setBezeled_(False)
+        models_label.setDrawsBackground_(False)
+        models_label.setEditable_(False)
+        self.window.contentView().addSubview_(models_label)
+        y_pos -= 30
+        
+        # Live Recording Model Popup
+        live_model_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
+        live_model_label.setStringValue_("Modelo Micrófono:")
+        live_model_label.setBezeled_(False)
+        live_model_label.setDrawsBackground_(False)
+        live_model_label.setEditable_(False)
+        self.window.contentView().addSubview_(live_model_label)
+        
+        self.live_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
+        local_models = [
+            "mlx-community/whisper-tiny-mlx",
+            "mlx-community/whisper-base-mlx",
+            "mlx-community/whisper-small-mlx",
+            "mlx-community/whisper-large-v3-turbo",
+            "mlx-community/whisper-large-v3-turbo-q4",
+            "mlx-community/parakeet-tdt-0.6b-v3",
+            "gemini-3-flash-preview"
+        ]
+        for model in local_models:
+            self.live_model_popup.addItemWithTitle_(model)
+        self.live_model_popup.setTarget_(self)
+        self.live_model_popup.setAction_("changeLiveModel:")
+        self.window.contentView().addSubview_(self.live_model_popup)
+        y_pos -= 40
+        
+        # File Model Popup
+        file_model_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
+        file_model_label.setStringValue_("Modelo Archivo:")
+        file_model_label.setBezeled_(False)
+        file_model_label.setDrawsBackground_(False)
+        file_model_label.setEditable_(False)
+        self.window.contentView().addSubview_(file_model_label)
+        
+        self.file_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
+        for model in ["gemini-3-flash-preview", "gemini-1.5-flash", "gemini-1.5-pro", "parakeet-tdt-0.6b-v3"]:
+            self.file_model_popup.addItemWithTitle_(model)
+        self.file_model_popup.setTarget_(self)
+        self.file_model_popup.setAction_("changeFileModel:")
+        self.window.contentView().addSubview_(self.file_model_popup)
+        y_pos -= 40
+        
+        # Mode Popup
+        mode_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
+        mode_label.setStringValue_("Modo:")
+        mode_label.setBezeled_(False)
+        mode_label.setDrawsBackground_(False)
+        mode_label.setEditable_(False)
+        self.window.contentView().addSubview_(mode_label)
+        
+        self.mode_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
+        for mode_name in SMART_PROMPTS.keys():
+            self.mode_popup.addItemWithTitle_(mode_name)
+        self.mode_popup.setTarget_(self)
+        self.mode_popup.setAction_("changeMode:")
+        self.window.contentView().addSubview_(self.mode_popup)
+        y_pos -= 40
+        
+        # Shortcut Popup
+        shortcut_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
+        shortcut_label.setStringValue_("Atajo:")
+        shortcut_label.setBezeled_(False)
+        shortcut_label.setDrawsBackground_(False)
+        shortcut_label.setEditable_(False)
+        self.window.contentView().addSubview_(shortcut_label)
+        
+        self.shortcut_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
+        shortcuts = ["F5", "Cmd+Opt+R", "Right Option"]
+        for shortcut in shortcuts:
+            self.shortcut_popup.addItemWithTitle_(shortcut)
+        self.shortcut_popup.setTarget_(self)
+        self.shortcut_popup.setAction_("changeShortcut:")
+        
+        self.window.contentView().addSubview_(self.shortcut_popup)
+        y_pos -= 40
+        
+        # Edit API Key Button
+        self.api_key_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 300, 35))
+        self.api_key_btn.setBezelStyle_(4)
+        self.api_key_btn.setTitle_("✏️ Editar API Key de Gemini")
+        self.api_key_btn.setTarget_(self)
+        self.api_key_btn.setAction_("editAPIKey:")
+        self.window.contentView().addSubview_(self.api_key_btn)
+        y_pos -= 50
+        
+        # Transcription Output
+        output_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
+        output_label.setStringValue_("📝 Transcripción:")
+        output_label.setBezeled_(False)
+        output_label.setDrawsBackground_(False)
+        output_label.setEditable_(False)
+        self.window.contentView().addSubview_(output_label)
+        y_pos -= 30
+        
+        # Transcription TextView
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 40, 660, y_pos - 40))
+        scroll.setBorderType_(1)  # NSBezelBorder
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        
+        self.transcription_view = NSTextView.alloc().initWithFrame_(scroll.contentView().bounds())
+        self.transcription_view.setEditable_(True)
+        self.transcription_view.setFont_(NSFont.systemFontOfSize_(12))
+        self.transcription_view.setAutoresizingMask_(18)  # NSViewWidthSizable | NSViewHeightSizable
+        
+        scroll.setDocumentView_(self.transcription_view)
+        self.window.contentView().addSubview_(scroll)
+        
+        # Copy Button
+        self.copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, 5, 100, 30))
+        self.copy_btn.setBezelStyle_(4)
+        self.copy_btn.setTitle_("Copiar")
+        self.copy_btn.setTarget_(self)
+        self.copy_btn.setAction_("copyTranscription:")
+        self.window.contentView().addSubview_(self.copy_btn)
+        
+        # Clear Button
+        self.clear_btn = NSButton.alloc().initWithFrame_(NSMakeRect(130, 5, 100, 30))
+        self.clear_btn.setBezelStyle_(4)
+        self.clear_btn.setTitle_("Limpiar")
+        self.clear_btn.setTarget_(self)
+        self.clear_btn.setAction_("clearTranscription:")
+        self.window.contentView().addSubview_(self.clear_btn)
+        
+        # Save Button
+        self.save_btn = NSButton.alloc().initWithFrame_(NSMakeRect(240, 5, 100, 30))
+        self.save_btn.setBezelStyle_(4)
+        self.save_btn.setTitle_("Guardar")
+        self.save_btn.setTarget_(self)
+        self.save_btn.setAction_("saveTranscription:")
+        self.window.contentView().addSubview_(self.save_btn)
+    
+    def show(self):
+        """Show window"""
+        if self.window:
+            self.window.makeKeyAndOrderFront_(None)
+    
+    @IBAction
+    def selectFile_(self, sender):
+        """Open file dialog to select audio file"""
+        panel = NSOpenPanel.alloc().init()
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setAllowedFileTypes_(['mp3', 'wav', 'm4a', 'ogg', 'qta'])
+        
+        response = panel.runModal()
+        
+        if response == 1:
+            self.selected_file = panel.URLs()[0].path()
+            self.file_path_text.setStringValue_(self.selected_file)
+            self.file_path_text.setTextColor_(NSColor.blackColor())
+            self.transcribe_btn.setEnabled_(True)
+    
+    @IBAction
+    def startTranscription_(self, sender):
+        """Start transcription of selected file"""
+        if not self.selected_file:
+            return
+        
+        # Reset progress
+        self.progress_bar.setDoubleValue_(0)
+        self.progress_text.setStringValue_("0%")
+        self.transcribe_btn.setEnabled_(False)
+        
+        # Start transcription in thread
+        import threading
+        threading.Thread(target=self._transcribe_thread, daemon=True).start()
+    
+    def _transcribe_thread(self):
+        """Transcription thread"""
+        try:
+            # Set progress to indeterminate on main thread
+            self.progress_bar.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "setIndeterminate:", True, True
+            )
+            self.progress_bar.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "startAnimation:", None, True
+            )
+            
+            # Start transcription via app
+            self.app._transcribe_file_thread(self.selected_file)
+            
+            # Update UI from main thread
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_onTranscriptionComplete:", None, True
+            )
+            
+        except Exception as e:
+            logging.error(f"Transcription error: {e}")
+            traceback.print_exc()
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_onTranscriptionError:", str(e), True
+            )
+    
+    @IBAction
+    def _onTranscriptionComplete_(self, sender):
+        """Called on main thread when transcription completes"""
+        # Stop indeterminate
+        self.progress_bar.setIndeterminate_(False)
+        self.progress_bar.stopAnimation_(None)
+        self.transcribe_btn.setEnabled_(True)
+        
+        rumps.notification("Darhisper", "Transcripción completada", "El resultado está en el campo de texto")
+    
+    @IBAction
+    def _onTranscriptionError_(self, error):
+        """Called on main thread when transcription fails"""
+        # Stop indeterminate
+        self.progress_bar.setIndeterminate_(False)
+        self.progress_bar.stopAnimation_(None)
+        self.transcribe_btn.setEnabled_(True)
+        
+        rumps.notification("Error", "Fallo en la transcripción", error)
+    
+    def update_progress(self, current, total):
+        """Update progress bar on main thread"""
+        if total > 0:
+            percentage = (current / total) * 100
+            self.progress_bar.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "setDoubleValue:", percentage, True
+            )
+            self.progress_text.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "setStringValue:", f"{int(percentage)}%", True
+            )
+    
+    def set_transcription_text(self, text):
+        """Set transcription text on main thread"""
+        self.transcription_view.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "setString:", text, True
+        )
+    
+    @IBAction
+    def changeFileModel_(self, sender):
+        """Handle file model change"""
+        model = sender.titleOfSelectedItem()
+        self.app.file_transcription_model = model
+        self.app.config["file_transcription_model"] = model
+        self.app.save_config()
+        rumps.notification("Darhisper", "Modelo actualizado", f"Modelo: {model}")
+    
+    @IBAction
+    def changeMode_(self, sender):
+        """Handle mode change"""
+        mode = sender.titleOfSelectedItem()
+        self.app.active_prompt_key = mode
+        self.app.config["active_prompt_key"] = mode
+        self.app.save_config()
+        rumps.notification("Darhisper", "Modo actualizado", f"Modo: {mode}")
+    
+    @IBAction
+    def changeShortcut_(self, sender):
+        """Handle shortcut change"""
+        shortcut = sender.titleOfSelectedItem()
+        from pynput import keyboard
+        presets = {
+            "F5": {keyboard.Key.f5},
+            "Cmd+Opt+R": {keyboard.Key.cmd, keyboard.Key.alt, keyboard.KeyCode.from_char('r')},
+            "Right Option": {keyboard.Key.alt_r}
+        }
+        if shortcut in presets:
+            self.app.hotkey_check = presets[shortcut]
+            self.app.config["hotkey"] = self.app.serialize_hotkey(self.app.hotkey_check)
+            self.app.save_config()
+            rumps.notification("Darhisper", "Atajo actualizado", f"Atajo: {shortcut}")
+    
+    @IBAction
+    def copyTranscription_(self, sender):
+        """Copy transcription to clipboard"""
+        text = self.transcription_view.string()
+        pyperclip.copy(text)
+        rumps.notification("Darhisper", "Copiado", "Transcripción copiada al portapapeles")
+    
+    @IBAction
+    def clearTranscription_(self, sender):
+        """Clear transcription text"""
+        self.transcription_view.setString_("")
+    
+    @IBAction
+    def saveTranscription_(self, sender):
+        """Save transcription to file"""
+        if not self.selected_file:
+            rumps.notification("Error", "Sin archivo", "Primero selecciona un archivo")
+            return
+        
+        text = self.transcription_view.string()
+        if not text:
+            rumps.notification("Error", "Sin texto", "No hay transcripción para guardar")
+            return
+        
+        # Save as .txt in same folder
+        txt_path = os.path.splitext(self.selected_file)[0] + '.txt'
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        
+        rumps.notification("Darhisper", "Guardado", f"Archivo guardado: {txt_path}")
+    
+    def get_shortcut_display_name(self):
+        """Get display name of current shortcut"""
+        from pynput import keyboard
+        
+        if not self.app or not self.app.hotkey_check:
+            return "F5"
+        
+        keys = self.app.hotkey_check
+        
+        # Compare with presets
+        if keys == {keyboard.Key.f5}:
+            return "F5"
+        elif keys == {keyboard.Key.cmd, keyboard.Key.alt, keyboard.KeyCode.from_char('r')}:
+            return "Cmd+Opt+R"
+        elif keys == {keyboard.Key.alt_r}:
+            return "Right Option"
+        
+        # Custom shortcut - try to build display name
+        key_names = []
+        for key in keys:
+            if isinstance(key, keyboard.Key):
+                key_names.append(key.name.title())
+            elif isinstance(key, keyboard.KeyCode):
+                if key.char:
+                    key_names.append(key.char.upper())
+        
+        if key_names:
+            return "+".join(key_names)
+        else:
+            return "F5"  # Default
+    
+    def update_interface_state(self):
+        """Update interface state from app config"""
+        # Update shortcut popup
+        if self.shortcut_popup and self.app:
+            current_shortcut = self.get_shortcut_display_name()
+            if current_shortcut:
+                self.shortcut_popup.selectItemWithTitle_(current_shortcut)
+        
+        # Update live model popup
+        if self.live_model_popup and self.app:
+            if self.app.model_path:
+                self.live_model_popup.selectItemWithTitle_(self.app.model_path)
+        
+        # Update file model popup
+        if self.file_model_popup and self.app:
+            if self.app.file_transcription_model:
+                self.file_model_popup.selectItemWithTitle_(self.app.file_transcription_model)
+        
+        # Update mode popup
+        if self.mode_popup and self.app:
+            if self.app.active_prompt_key:
+                self.mode_popup.selectItemWithTitle_(self.app.active_prompt_key)
+    
+    @IBAction
+    def changeLiveModel_(self, sender):
+        """Handle live recording model change"""
+        model = sender.titleOfSelectedItem()
+        self.app.model_path = model
+        self.app.config["model"] = model
+        self.app.save_config()
+        rumps.notification("Darhisper", "Modelo de micrófono actualizado", f"Modelo: {model}")
+    
+    @IBAction
+    def editAPIKey_(self, sender):
+        """Edit Gemini API Key"""
+        from AppKit import NSAlert, NSTextField
+        
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("Editar API Key de Gemini")
+        alert.setInformativeText_("Introduce tu API Key de Google Gemini:")
+        alert.setAlertStyle_(0)  # NSInformationalAlertStyle
+        
+        input_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 400, 24))
+        input_field.setStringValue_(self.app.gemini_api_key if self.app.gemini_api_key else "")
+        alert.setAccessoryView_(input_field)
+        
+        response = alert.runModal()
+        
+        if response == 1:  # NSAlertFirstButtonReturn
+            new_key = input_field.stringValue().strip()
+            if new_key:
+                self.app.gemini_api_key = new_key
+                self.app.config["gemini_api_key"] = new_key
+                self.app.save_config()
+                try:
+                    self.app.gemini_client = genai.Client(api_key=self.gemini_api_key)
+                    rumps.notification("Darhisper", "API Key Guardada", "La API Key se ha guardado correctamente")
+                except Exception as e:
+                    rumps.notification("Error", "Fallo al inicializar cliente", str(e))
+
+
 class AudioRecorder:
     def __init__(self):
         self.recording = False
@@ -523,87 +1046,7 @@ class AudioRecorder:
         return np.concatenate(self.audio_data, axis=0)
 
 class VoiceTranscriberApp(rumps.App):
-    def __init__(self):
-        super(VoiceTranscriberApp, self).__init__("🎙️")
-        self.recorder = AudioRecorder()
-        self.is_transcribing = False
-        self.is_learning_hotkey = False
-        self.learning_keys = set()
-        
-        # Progress tracking for file transcription
-        self.transcription_progress = {"current": 0, "total": 0, "is_file": False}
-        
-        # Inicializar ventana de ondas (ahora con PyObjC, no necesita hilo separado)
-        self.wave_window = VoiceWaveWindow(self)
-        
-        # Load configuration
-        self.config = self.load_config()
-        self.model_path = self.config.get("model", DEFAULT_MODEL)
-        self.gemini_api_key = self.config.get("gemini_api_key", "")
-        self.active_prompt_key = self.config.get("active_prompt_key", "Transcripción Literal")
-        self.hotkey_check = self.deserialize_hotkey(self.config.get("hotkey", ["Key.f5"]))
-        self.parakeet_model = None
-        self.file_transcription_model = self.config.get("file_transcription_model", "gemini-3-flash-preview")
-        
-        # Configurar Gemini si hay key
-        self.gemini_client = None
-        if self.gemini_api_key:
-            try:
-                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
-            except Exception as e:
-                print(f"Error initializing Gemini client: {e}")
-        
-        # Pre-generate feedback sounds
-        self.start_sound = self.generate_beep(880, 0.1)
-        self.stop_sound = self.generate_beep(440, 0.1)
-        
-        # Menu items
-        self.menu = [
-            rumps.MenuItem("Transcribir Archivo...", callback=self.select_and_transcribe_file),
-            rumps.MenuItem("Progreso: Listo", icon=None, callback=None),
-            rumps.MenuItem("File Model", icon=None, dimensions=(1, 1)),
-            rumps.MenuItem("Model", icon=None, dimensions=(1, 1)),
-            rumps.MenuItem("Mode", icon=None, dimensions=(1, 1)),
-            rumps.MenuItem("Shortcut", icon=None, dimensions=(1, 1)),
-            rumps.separator
-        ]
-        
-        # Hotkey listener initialization
-        self.current_keys = set()
-        
-        # Submenus
-        self.setup_model_menu()
-        self.setup_file_model_menu()
-        self.setup_prompts_menu()
-        self.setup_shortcut_menu()
-        
-        self.setup_hotkey_listener()
-        
-        # Timer for updating progress UI
-        self.progress_timer = rumps.Timer(self.update_progress_ui, 0.5)
-        self.progress_timer.start()
-
-    def update_progress_ui(self, sender):
-        """Update the progress indicator in the menu"""
-        if self.transcription_progress["is_file"]:
-            current = self.transcription_progress["current"]
-            total = self.transcription_progress["total"]
-            percentage = int((current / total) * 100) if total > 0 else 0
-            self.menu["Progreso: Listo"].title = f"Progreso: {current}/{total} ({percentage}%)"
-        else:
-            self.menu["Progreso: Listo"].title = "Progreso: Listo"
-
-    def generate_beep(self, frequency, duration=0.1, fs=SAMPLE_RATE):
-        t = np.linspace(0, duration, int(fs * duration), False)
-        tone = np.sin(2 * np.pi * frequency * t) * 0.1
-        # Fade in/out
-        envelope = np.concatenate([
-            np.linspace(0, 1, int(fs * 0.01)),
-            np.ones(int(fs * (duration - 0.02))),
-            np.linspace(1, 0, int(fs * 0.01))
-        ])
-        return (tone * envelope).astype(np.float32)
-
+    
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
@@ -643,230 +1086,7 @@ class VoiceTranscriberApp(rumps.App):
             except:
                 pass # Ignore malformed keys
         return keys
-
-    def setup_model_menu(self):
-        local_models = [
-            "mlx-community/whisper-tiny-mlx",
-            "mlx-community/whisper-base-mlx",
-            "mlx-community/whisper-small-mlx",
-            "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-large-v3-turbo-q4",
-            "mlx-community/parakeet-tdt-0.6b-v3"
-        ]
-        
-        cloud_models = [
-            "gemini-3-flash-preview"
-        ]
-
-        img_model_menu = rumps.MenuItem("Select Model")
-        
-        # Local Models Section
-        header_local = rumps.MenuItem("--- Local (MLX) ---")
-        img_model_menu.add(header_local)
-        
-        for m in local_models:
-            item = rumps.MenuItem(m, callback=self.change_model)
-            if m == self.model_path:
-                item.state = 1
-            img_model_menu.add(item)
-        
-        img_model_menu.add(rumps.separator)
-        
-        # Cloud Models Section
-        header_cloud = rumps.MenuItem("--- Cloud (API) ---")
-        img_model_menu.add(header_cloud)
-        
-        for m in cloud_models:
-            item = rumps.MenuItem(m, callback=self.change_model)
-            if m == self.model_path:
-                item.state = 1
-            img_model_menu.add(item)
-        
-        img_model_menu.add(rumps.separator)
-        
-        # API Keys Section
-        header_keys = rumps.MenuItem("--- API Keys ---")
-        img_model_menu.add(header_keys)
-        
-        img_model_menu.add(rumps.MenuItem("Edit Gemini API Key", callback=self.edit_gemini_key))
-            
-        self.menu["Model"].add(img_model_menu)
-
-    def setup_file_model_menu(self):
-        file_models = [
-            "gemini-3-flash-preview",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "parakeet-tdt-0.6b-v3"
-        ]
-        
-        file_model_menu = rumps.MenuItem("Select File Model")
-        
-        for model in file_models:
-            item = rumps.MenuItem(model, callback=self.change_file_model)
-            if model == self.file_transcription_model:
-                item.state = 1
-            file_model_menu.add(item)
-        
-        self.menu["File Model"].add(file_model_menu)
-
-    def change_file_model(self, sender):
-        model_name = sender.title
-        
-        # Update menu selection
-        for item in self.menu["File Model"]["Select File Model"].values():
-            item.state = 0
-        sender.state = 1
-        
-        self.file_transcription_model = model_name
-        self.config["file_transcription_model"] = self.file_transcription_model
-        self.save_config()
-        print(f"File transcription model changed to: {self.file_transcription_model}")
-        rumps.notification("Darhisper", "Modelo de archivos actualizado", f"Usando: {model_name}")
-
-    def edit_gemini_key(self, sender):
-        window = rumps.Window(
-            title="Gemini API Key",
-            message="Edit your Google Gemini API Key:",
-            default_text=self.gemini_api_key if self.gemini_api_key else "",
-            ok="Save",
-            cancel="Cancel",
-            dimensions=(300, 24)
-        )
-        response = window.run()
-        if response.clicked:
-            new_key = response.text.strip()
-            self.gemini_api_key = new_key
-            self.config["gemini_api_key"] = self.gemini_api_key
-            self.save_config()
-            
-            # Re-init client
-            if self.gemini_api_key:
-                try:
-                    self.gemini_client = genai.Client(api_key=self.gemini_api_key)
-                    rumps.alert("Success", "Gemini API Key updated successfully.")
-                except Exception as e:
-                    rumps.alert("Error", f"Error initializing Gemini client: {e}")
-            else:
-                 self.gemini_client = None
-                 rumps.alert("Success", "Gemini API Key cleared.")
-
-    def change_model(self, sender):
-        model_name = sender.title
-        
-        # Si selecciona Gemini, verificar API Key
-        if "gemini" in model_name:
-            if not self.gemini_api_key:
-                # Pedir API Key
-                window = rumps.Window(
-                    title="Gemini API Key",
-                    message="Ingresa tu API Key de Google Gemini:",
-                    default_text="",
-                    ok="Guardar",
-                    cancel="Cancelar",
-                    dimensions=(300, 24)
-                )
-                response = window.run()
-                if response.clicked:
-                    self.gemini_api_key = response.text.strip()
-                    if self.gemini_api_key:
-                        self.config["gemini_api_key"] = self.gemini_api_key
-                        try:
-                            self.gemini_client = genai.Client(api_key=self.gemini_api_key)
-                            rumps.alert("API Key Guardada", "La API Key se ha guardado correctamente.")
-                        except Exception as e:
-                            rumps.alert("Error", f"Error al inicializar cliente: {e}")
-                            return
-                    else:
-                        rumps.alert("Error", "La API Key no puede estar vacía.")
-                        return # No cambiar modelo si cancela o falla
-                else:
-                    return # Cancelado
-        
-        # Actualizar selección en menú
-        for item in self.menu["Model"]["Select Model"].values():
-            item.state = 0
-        sender.state = 1
-        
-        self.model_path = model_name
-        self.config["model"] = self.model_path
-        self.save_config()
-        print(f"Model switched to: {self.model_path}")
-
-    def setup_prompts_menu(self):
-        prompts_menu = rumps.MenuItem("Select Mode")
-        
-        for name in SMART_PROMPTS.keys():
-            item = rumps.MenuItem(name, callback=self.change_prompt_mode)
-            if name == self.active_prompt_key:
-                item.state = 1
-            prompts_menu.add(item)
-            
-        self.menu["Mode"].add(prompts_menu)
-
-    def change_prompt_mode(self, sender):
-        mode_name = sender.title
-        
-        if mode_name in SMART_PROMPTS:
-            self.active_prompt_key = mode_name
-            self.config["active_prompt_key"] = self.active_prompt_key
-            self.save_config()
-            
-            # Update menu state
-            for item in self.menu["Mode"]["Select Mode"].values():
-                item.state = 0
-            sender.state = 1
-            
-            print(f"Prompt mode switched to: {mode_name}")
-            rumps.notification("Darhisper", "Modo Actualizado", f"Modo activado: {mode_name}")
-
-    def setup_shortcut_menu(self):
-        # Determine text for current shortcut
-        current_serialized = self.config.get("hotkey", ["Key.f5"])
-        
-        presets = {
-            "F5": {keyboard.Key.f5},
-            "Cmd+Opt+R": {keyboard.Key.cmd, keyboard.Key.alt, keyboard.KeyCode.from_char('r')},
-            "Right Option": {keyboard.Key.alt_r}
-        }
-        
-        shortcut_menu = rumps.MenuItem("Select Shortcut")
-        
-        # Add presets
-        for name, keys in presets.items():
-            item = rumps.MenuItem(name, callback=self.change_shortcut_preset)
-            if keys == self.hotkey_check:
-                item.state = 1
-            shortcut_menu.add(item)
-            
-        shortcut_menu.add(rumps.separator)
-        shortcut_menu.add(rumps.MenuItem("Record New Shortcut...", callback=self.start_recording_hotkey))
-        
-        self.menu["Shortcut"].add(shortcut_menu)
-
-    def change_shortcut_preset(self, sender):
-        presets = {
-            "F5": {keyboard.Key.f5},
-            "Cmd+Opt+R": {keyboard.Key.cmd, keyboard.Key.alt, keyboard.KeyCode.from_char('r')},
-            "Right Option": {keyboard.Key.alt_r}
-        }
-        
-        for item in self.menu["Shortcut"]["Select Shortcut"].values():
-            item.state = 0
-        sender.state = 1
-        
-        if sender.title in presets:
-            self.hotkey_check = presets[sender.title]
-            self.config["hotkey"] = self.serialize_hotkey(self.hotkey_check)
-            self.save_config()
-            print(f"Shortcut changed to: {sender.title}")
-
-    def start_recording_hotkey(self, sender):
-        self.is_learning_hotkey = True
-        self.learning_keys = set()
-        self.title = "⌨️"
-        rumps.notification("Darhisper", "Recording Shortcut", "Press your desired key combination now.")
-
+    
     def setup_hotkey_listener(self):
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
@@ -904,8 +1124,8 @@ class VoiceTranscriberApp(rumps.App):
                 rumps.notification("Darhisper", "Shortcut Saved", "New shortcut has been saved.")
                 
                 # Update menu state (clear others)
-                for item in self.menu["Shortcut"]["Select Shortcut"].values():
-                    item.state = 0
+                if self.interface_window:
+                    pass  # Update interface if needed
             return
 
         if key in self.current_keys:
@@ -929,6 +1149,95 @@ class VoiceTranscriberApp(rumps.App):
                     
                 if audio is not None:
                     threading.Thread(target=self.transcribe_and_paste, args=(audio,)).start()
+    
+    def start_learning_hotkey(self):
+        self.is_learning_hotkey = True
+        self.learning_keys = set()
+        self.title = "⌨️"
+        rumps.notification("Darhisper", "Recording Shortcut", "Press your desired key combination now.")
+    
+    def generate_beep(self, frequency, duration=0.1, fs=SAMPLE_RATE):
+        t = np.linspace(0, duration, int(fs * duration), False)
+        tone = np.sin(2 * np.pi * frequency * t) * 0.1
+        # Fade in/out
+        envelope = np.concatenate([
+            np.linspace(0, 1, int(fs * 0.01)),
+            np.ones(int(fs * (duration - 0.02))),
+            np.linspace(1, 0, int(fs * 0.01))
+        ])
+        return (tone * envelope).astype(np.float32)
+    def __init__(self):
+        super(VoiceTranscriberApp, self).__init__("🎙️")
+        self.recorder = AudioRecorder()
+        self.is_transcribing = False
+        self.is_learning_hotkey = False
+        self.learning_keys = set()
+        
+        # Progress tracking for file transcription
+        self.transcription_progress = {"current": 0, "total": 0, "is_file": False}
+        
+        # Initialize interface window (will be created when opened)
+        self.interface_window = None
+        
+        # Inicializar ventana de ondas (ahora con PyObjC, no necesita hilo separado)
+        self.wave_window = VoiceWaveWindow(self)
+        
+        # Load configuration
+        self.config = self.load_config()
+        self.model_path = self.config.get("model", DEFAULT_MODEL)
+        self.gemini_api_key = self.config.get("gemini_api_key", "")
+        self.active_prompt_key = self.config.get("active_prompt_key", "Transcripción Literal")
+        self.hotkey_check = self.deserialize_hotkey(self.config.get("hotkey", ["Key.f5"]))
+        self.parakeet_model = None
+        self.file_transcription_model = self.config.get("file_transcription_model", "gemini-3-flash-preview")
+        
+        # Configurar Gemini si hay key
+        self.gemini_client = None
+        if self.gemini_api_key:
+            try:
+                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
+            except Exception as e:
+                print(f"Error initializing Gemini client: {e}")
+        
+        # Pre-generate feedback sounds
+        self.start_sound = self.generate_beep(880, 0.1)
+        self.stop_sound = self.generate_beep(440, 0.1)
+        
+        # Menu items - simplified to just open and quit
+        self.menu = [
+            rumps.MenuItem("Abrir Darhisper", callback=self.open_darhisper_interface),
+            rumps.separator,
+            rumps.MenuItem("Quit", callback=rumps.quit_application)
+        ]
+        
+        # Hotkey listener initialization
+        self.current_keys = set()
+        
+        # Setup hotkey listener
+        self.setup_hotkey_listener()
+        
+        # Timer for updating progress UI
+        self.progress_timer = rumps.Timer(self.update_progress_ui, 0.5)
+        self.progress_timer.start()
+
+    def update_progress_ui(self, sender):
+        """Update progress indicator in interface"""
+        if self.transcription_progress["is_file"]:
+            current = self.transcription_progress["current"]
+            total = self.transcription_progress["total"]
+            
+            # Update interface if open
+            if self.interface_window:
+                self.interface_window.update_progress(current, total)
+
+    def open_darhisper_interface(self, sender):
+        """Open main Darhisper interface window"""
+        if self.interface_window is None:
+            self.interface_window = DarhisperInterface.alloc().init()
+            self.interface_window.setupInterface_(self)
+        # Update interface state when showing
+        self.interface_window.update_interface_state()
+        self.interface_window.show()
 
     def convert_audio_to_wav(self, input_path):
         """Convert audio file to WAV format compatible with Parakeet (16kHz, mono, PCM 16-bit)"""
@@ -1114,28 +1423,7 @@ class VoiceTranscriberApp(rumps.App):
             logging.error(f"Error in transcribe_long_audio: {e}")
             traceback.print_exc()
             raise e
-
-    def select_and_transcribe_file(self, sender):
-        """Open file dialog and start transcription thread"""
-        panel = NSOpenPanel.alloc().init()
-        panel.setCanChooseFiles_(True)
-        panel.setCanChooseDirectories_(False)
-        panel.setAllowsMultipleSelection_(False)
-        panel.setAllowedFileTypes_(['mp3', 'wav', 'm4a', 'ogg', 'qta'])
-        
-        response = panel.runModal()
-        
-        if response == 1:  # OK button pressed
-            selected_file = panel.URLs()[0].path()
-            if selected_file:
-                logging.info(f"Selected file for transcription: {selected_file}")
-                # Start transcription in a separate thread
-                threading.Thread(
-                    target=self._transcribe_file_thread,
-                    args=(selected_file,),
-                    daemon=True
-                ).start()
-
+ 
     def _transcribe_file_thread(self, file_path):
         """Thread function to transcribe an audio file"""
         self.is_transcribing = True
@@ -1210,6 +1498,10 @@ class VoiceTranscriberApp(rumps.App):
                 # Copy to clipboard
                 pyperclip.copy(text)
                 time.sleep(0.2)
+                
+                # Update interface if open
+                if self.interface_window:
+                    self.interface_window.set_transcription_text(text)
                 
                 # Save to .txt file in same folder as original audio
                 try:
