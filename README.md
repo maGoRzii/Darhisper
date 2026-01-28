@@ -120,6 +120,7 @@ Todas las configuraciones se gestionan desde el **Panel de Control** ("Abrir Dar
 *(Disponible con modelos Gemini)*
 Personaliza el estilo de la transcripción:
 *   **Transcripción Literal**: Texto exacto, letra por letra.
+*   **Resumen de Reunión**: Extrae los puntos clave y crea un resumen ejecutivo sin perder detalles.
 *   **Lista de Tareas (To-Do)**: Convierte voz en checklist.
 *   **Email Profesional**: Redacta correos formales.
 *   **Modo Excel/Datos**: Formato tabular para hojas de cálculo.
@@ -140,6 +141,8 @@ Personaliza el estilo de la transcripción:
 | :--- | :--- |
 | **No escribe nada** | Verifica que has dado permisos de **Accesibilidad** en *Preferencias del Sistema -> Privacidad y Seguridad*. |
 | **Error al iniciar** | Asegúrate de tener un Mac con **Apple Silicon**. Borra la carpeta `~/.darhisper_config.json` para resetear la config. |
+| **Error al transcribir archivo** | Si usas la app compilada, asegúrate de tener `ffmpeg` instalado (`brew install ffmpeg`). La app busca en rutas estándar (`/opt/homebrew/bin`, etc.). |
+| **La app no abre ventana** | Si al pulsar "Abrir Darhisper" no aparece nada, asegúrate de no tener la ventana minimizada o en otro escritorio. La versión actual fuerza la ventana al frente. |
 | **La primera transcripción tarda** | Es normal. La primera vez, la app descarga los modelos de IA (1-3 GB). Las siguientes serán instantáneas. |
 
 ---

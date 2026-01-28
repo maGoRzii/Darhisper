@@ -80,6 +80,9 @@ Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro",
 Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro", ni comillas al principio o final. Solo el texto del audio formateado de la manera que te pide el prompt.""",
     "Modo Excel/Datos": """Actúa como un formateador de datos. Tu salida debe ser estrictamente texto plano formateado para pegar en Excel/Numbers. Si detectas listas de números o categorías, usa tabuladores o saltos de línea. No añadas texto conversacional, solo los datos.
 
+Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro", ni comillas al principio o final. Solo el texto del audio formateado de la manera que te pide el prompt.""",
+    "Resumen de reunión": """Crea un resumen de esta reunión teniendo en cuenta los puntos más importantes y sin dejarte nada.
+
 Salida limpia: NO añadas frases como "Aquí tienes la transcripción", "Claro", ni comillas al principio o final. Solo el texto del audio formateado de la manera que te pide el prompt."""
 }
 
