@@ -6,6 +6,7 @@ APP = ['main.py']
 DATA_FILES = []
 OPTIONS = {
     'argv_emulation': False,
+    'iconfile': 'assets/Darhisper.icns',
     'plist': {
         'LSUIElement': True,
         'CFBundleName': 'Darhisper',
