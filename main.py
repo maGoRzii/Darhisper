@@ -17,6 +17,7 @@ import math
 import objc
 from objc import IBAction
 from AppKit import NSWindow, NSView, NSColor, NSMakeRect, NSBorderlessWindowMask, NSFloatingWindowLevel, NSTimer, NSBezierPath, NSOpenPanel, NSButton, NSPopUpButton, NSProgressIndicator, NSTextField, NSScrollView, NSTextView, NSObject, NSFont
+from AppKit import NSVisualEffectView, NSVisualEffectMaterialDark, NSVisualEffectBlendingModeBehindWindow, NSVisualEffectStateActive, NSAppearance, NSAppearanceNameVibrantDark, NSBox, NSNoBorder, NSLineBorder, NSBezelBorder
 from Quartz import CGRectMake
 from google import genai
 import scipy.io.wavfile as wav
@@ -204,9 +205,9 @@ class WaveView(NSView):
             line_y = center_y - (line_height / 2)
             line_rect = NSMakeRect(1, line_y, width - 2, line_height)
             
-            # Color gris oscuro para la línea (interior)
+            # Color para la línea (interior) - Cian suave
             NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                0.25, 0.25, 0.28, 1.0  # Gris oscuro
+                0.0, 0.8, 1.0, 0.8  # Cian vibrante pero sutil
             ).setFill()
             
             line_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
@@ -214,11 +215,11 @@ class WaveView(NSView):
             )
             line_path.fill()
             
-            # Dibujar borde más claro alrededor
+            # Dibujar brillo exterior
             NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                0.4, 0.4, 0.45, 0.8  # Gris más claro para el borde
+                0.0, 0.8, 1.0, 0.3
             ).setStroke()
-            line_path.setLineWidth_(0.5)
+            line_path.setLineWidth_(1.5)
             line_path.stroke()
         else:
             # Modo grabando: líneas entrelazadas estilo IA moderno
@@ -264,14 +265,13 @@ class WaveView(NSView):
                 # Configurar estilo de línea
                 path.setLineWidth_(2.0)
                 
-                # Colores grises/plateados con transparencia
-                # La línea más activa es más clara
-                if i == 0: # Principal
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.9, 0.9, 0.95, 0.9).setStroke()
-                elif i == 1: # Secundaria
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.6, 0.6, 0.65, 0.7).setStroke()
-                else: # Terciaria
-                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.4, 0.4, 0.45, 0.5).setStroke()
+                # Colores estilo Siri/AI moderno
+                if i == 0: # Principal - Cian/Blanco
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.0, 1.0, 1.0, 0.9).setStroke()
+                elif i == 1: # Secundaria - Violeta
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.7, 0.3, 1.0, 0.7).setStroke()
+                else: # Terciaria - Azul Profundo
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(0.1, 0.4, 1.0, 0.5).setStroke()
                     
                 path.stroke()
     
@@ -515,8 +515,8 @@ class DarhisperInterface(NSObject):
         self._setup_ui()
         
     def _create_window(self):
-        """Create the main window"""
-        rect = NSMakeRect(100, 100, 700, 750)
+        """Create the main window with dark vibrant appearance"""
+        rect = NSMakeRect(100, 100, 720, 800)
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect,
             15,  # NSClosableWindowMask | NSTitledWindowMask | NSMiniaturizableWindowMask
@@ -527,227 +527,217 @@ class DarhisperInterface(NSObject):
         self.window.setTitle_("Darhisper")
         self.window.setReleasedWhenClosed_(False)
         self.window.center()
+        
+        # Enable dark vibrant appearance for the window
+        self.window.setAppearance_(NSAppearance.appearanceNamed_(NSAppearanceNameVibrantDark))
+        
+        # Set background to transparent to let visual effect show through
+        self.window.setOpaque_(False)
+        self.window.setBackgroundColor_(NSColor.clearColor())
+        
+        # Add visual effect view as the root container
+        self.visual_effect_view = NSVisualEffectView.alloc().initWithFrame_(self.window.contentView().bounds())
+        self.visual_effect_view.setMaterial_(NSVisualEffectMaterialDark)
+        self.visual_effect_view.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+        self.visual_effect_view.setState_(NSVisualEffectStateActive)
+        self.visual_effect_view.setAutoresizingMask_(18) # NSViewWidthSizable | NSViewHeightSizable
+        
+        self.window.setContentView_(self.visual_effect_view)
     
+    def _create_label(self, text, frame, size=13, weight="regular", align=0):
+        """Helper to create a styled label"""
+        label = NSTextField.alloc().initWithFrame_(frame)
+        label.setStringValue_(text)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        if weight == "bold":
+            label.setFont_(NSFont.boldSystemFontOfSize_(size))
+        else:
+            label.setFont_(NSFont.systemFontOfSize_(size))
+        label.setAlignment_(align)
+        label.setTextColor_(NSColor.whiteColor())
+        return label
+
+    def _create_card(self, frame, title):
+        """Helper to create a styled card container"""
+        box = NSBox.alloc().initWithFrame_(frame)
+        box.setTitle_(title)
+        box.setBoxType_(0) # NSBoxPrimary
+        box.setBorderType_(NSLineBorder)
+        box.setCornerRadius_(12.0)
+        box.setBorderWidth_(0.5)
+        box.setBorderColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.15))
+        box.setFillColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.05))
+        box.setTitleFont_(NSFont.boldSystemFontOfSize_(12))
+        return box
+
     def _setup_ui(self):
-        """Setup all UI components"""
-        from AppKit import NSScrollView, NSTextView
+        """Setup all UI components with a modern card-based layout"""
+        content_view = self.visual_effect_view
         
-        # Y position for next element
-        y_pos = 680
+        # Header
+        header_y = 740
+        title_label = self._create_label("🎙️ DARHISPER", NSMakeRect(20, header_y, 680, 40), size=24, weight="bold", align=1)
+        content_view.addSubview_(title_label)
         
-        # Title
-        title_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 30))
-        title_label.setStringValue_("🎙️ Darhisper - Transcripción de Audio")
-        title_label.setBezeled_(False)
-        title_label.setDrawsBackground_(False)
-        title_label.setEditable_(False)
-        title_label.setFont_(NSFont.systemFontOfSize_(18))
-        title_label.setAlignment_(1)  # Center
-        self.window.contentView().addSubview_(title_label)
-        y_pos -= 50
+        subtitle_label = self._create_label("Asistente de Voz Inteligente", NSMakeRect(20, header_y - 25, 680, 20), size=12, align=1)
+        subtitle_label.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.6))
+        content_view.addSubview_(subtitle_label)
         
-        # File Selection Section
-        file_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
-        file_label.setStringValue_("📁 Archivo de Audio:")
-        file_label.setBezeled_(False)
-        file_label.setDrawsBackground_(False)
-        file_label.setEditable_(False)
-        self.window.contentView().addSubview_(file_label)
-        y_pos -= 30
+        # --- Section: File Transcription ---
+        file_section = self._create_card(NSMakeRect(20, 560, 680, 140), "TRANSCRIPCIÓN DE ARCHIVO")
         
         # Select File Button
-        self.select_file_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 35))
-        self.select_file_btn.setBezelStyle_(4)  # NSRoundedBezelStyle
-        self.select_file_btn.setTitle_("Seleccionar Archivo")
+        self.select_file_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 85, 160, 32))
+        self.select_file_btn.setBezelStyle_(11) # NSBezelStyleRounded
+        self.select_file_btn.setTitle_("📁 Elegir Archivo...")
         self.select_file_btn.setTarget_(self)
         self.select_file_btn.setAction_("selectFile:")
-        self.window.contentView().addSubview_(self.select_file_btn)
+        file_section.addSubview_(self.select_file_btn)
         
         # File Path Display
-        self.file_path_text = NSTextField.alloc().initWithFrame_(NSMakeRect(180, y_pos, 500, 35))
+        self.file_path_text = NSTextField.alloc().initWithFrame_(NSMakeRect(185, 87, 470, 28))
         self.file_path_text.setStringValue_("Ningún archivo seleccionado")
-        self.file_path_text.setBezeled_(True)
+        self.file_path_text.setBezeled_(False)
+        self.file_path_text.setDrawsBackground_(True)
+        self.file_path_text.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.3))
         self.file_path_text.setEditable_(False)
-        self.file_path_text.setTextColor_(NSColor.grayColor())
-        self.window.contentView().addSubview_(self.file_path_text)
-        y_pos -= 50
+        self.file_path_text.setCornerRadius_(6)
+        self.file_path_text.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.5))
+        self.file_path_text.setFont_(NSFont.userFixedPitchFontOfSize_(11))
+        file_section.addSubview_(self.file_path_text)
         
-        # Transcribe Button
-        self.transcribe_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 45))
-        self.transcribe_btn.setBezelStyle_(1)  # NSRegularSquareBezelStyle
-        self.transcribe_btn.setTitle_("▶️ Transcribir Archivo")
+        # Transcribe Button (Highlighted)
+        self.transcribe_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 15, 650, 45))
+        self.transcribe_btn.setBezelStyle_(11)
+        self.transcribe_btn.setTitle_("🚀 COMENZAR TRANSCRIPCIÓN")
         self.transcribe_btn.setTarget_(self)
         self.transcribe_btn.setAction_("startTranscription:")
         self.transcribe_btn.setEnabled_(False)
-        self.window.contentView().addSubview_(self.transcribe_btn)
-        y_pos -= 60
+        # We can't easily change button colors in native AppKit without subclasses, but we'll use a standard style
+        file_section.addSubview_(self.transcribe_btn)
         
-        # Progress Section
-        progress_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
-        progress_label.setStringValue_("📊 Progreso:")
-        progress_label.setBezeled_(False)
-        progress_label.setDrawsBackground_(False)
-        progress_label.setEditable_(False)
-        self.window.contentView().addSubview_(progress_label)
-        y_pos -= 30
+        content_view.addSubview_(file_section)
         
-        # Progress Bar
-        self.progress_bar = NSProgressIndicator.alloc().initWithFrame_(NSMakeRect(20, y_pos, 600, 25))
+        # --- Section: Progress ---
+        progress_section = self._create_card(NSMakeRect(20, 480, 680, 70), "PROGRESO")
+        
+        self.progress_bar = NSProgressIndicator.alloc().initWithFrame_(NSMakeRect(15, 25, 600, 20))
         self.progress_bar.setMinValue_(0)
         self.progress_bar.setMaxValue_(100)
         self.progress_bar.setIndeterminate_(False)
-        self.progress_bar.setDisplayedWhenStopped_(True)
-        self.window.contentView().addSubview_(self.progress_bar)
+        self.progress_bar.setControlSize_(0) # NSRegularControlSize
+        self.progress_bar.setStyle_(1) # NSProgressIndicatorStyleBar
+        progress_section.addSubview_(self.progress_bar)
         
-        # Progress Text
-        self.progress_text = NSTextField.alloc().initWithFrame_(NSMakeRect(630, y_pos, 50, 25))
-        self.progress_text.setStringValue_("0%")
-        self.progress_text.setBezeled_(False)
-        self.progress_text.setDrawsBackground_(False)
-        self.progress_text.setEditable_(False)
-        self.progress_text.setAlignment_(1)
-        self.window.contentView().addSubview_(self.progress_text)
-        y_pos -= 50
+        self.progress_text = self._create_label("0%", NSMakeRect(620, 25, 45, 20), size=12, weight="bold", align=2)
+        progress_section.addSubview_(self.progress_text)
         
-        # Model Selection Section
-        models_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
-        models_label.setStringValue_("⚙️ Configuración:")
-        models_label.setBezeled_(False)
-        models_label.setDrawsBackground_(False)
-        models_label.setEditable_(False)
-        self.window.contentView().addSubview_(models_label)
-        y_pos -= 30
+        content_view.addSubview_(progress_section)
         
-        # Live Recording Model Popup
-        live_model_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
-        live_model_label.setStringValue_("Modelo Micrófono:")
-        live_model_label.setBezeled_(False)
-        live_model_label.setDrawsBackground_(False)
-        live_model_label.setEditable_(False)
-        self.window.contentView().addSubview_(live_model_label)
+        # --- Section: Configuration ---
+        config_section = self._create_card(NSMakeRect(20, 310, 680, 160), "CONFIGURACIÓN")
         
-        self.live_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
-        local_models = [
-            "mlx-community/whisper-tiny-mlx",
-            "mlx-community/whisper-base-mlx",
-            "mlx-community/whisper-small-mlx",
-            "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-large-v3-turbo-q4",
-            "mlx-community/parakeet-tdt-0.6b-v3",
-            "gemini-3-flash-preview"
-        ]
-        for model in local_models:
-            self.live_model_popup.addItemWithTitle_(model)
+        # Grid layout for popups
+        popup_width = 180
+        label_width = 130
+        
+        # Row 1: Models
+        config_section.addSubview_(self._create_label("Modelo Micrófono:", NSMakeRect(15, 115, label_width, 20)))
+        self.live_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(150, 113, 180, 25))
+        
+        config_section.addSubview_(self._create_label("Modelo Archivo:", NSMakeRect(350, 115, label_width, 20)))
+        self.file_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(485, 113, 180, 25))
+        
+        # Row 2: Mode & Shortcut
+        config_section.addSubview_(self._create_label("Modo de IA:", NSMakeRect(15, 75, label_width, 20)))
+        self.mode_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(150, 73, 180, 25))
+        
+        config_section.addSubview_(self._create_label("Atajo Global:", NSMakeRect(350, 75, label_width, 20)))
+        self.shortcut_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(485, 73, 180, 25))
+        
+        # Populate popups (logic remains same)
+        for m in ["mlx-community/whisper-tiny-mlx", "mlx-community/whisper-base-mlx", "mlx-community/whisper-small-mlx", 
+                  "mlx-community/whisper-large-v3-turbo", "mlx-community/whisper-large-v3-turbo-q4", 
+                  "mlx-community/parakeet-tdt-0.6b-v3", "gemini-3-flash-preview"]:
+            self.live_model_popup.addItemWithTitle_(m)
         self.live_model_popup.setTarget_(self)
         self.live_model_popup.setAction_("changeLiveModel:")
-        self.window.contentView().addSubview_(self.live_model_popup)
-        y_pos -= 40
+        config_section.addSubview_(self.live_model_popup)
         
-        # File Model Popup
-        file_model_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
-        file_model_label.setStringValue_("Modelo Archivo:")
-        file_model_label.setBezeled_(False)
-        file_model_label.setDrawsBackground_(False)
-        file_model_label.setEditable_(False)
-        self.window.contentView().addSubview_(file_model_label)
-        
-        self.file_model_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
-        for model in ["gemini-3-flash-preview", "gemini-1.5-flash", "gemini-1.5-pro", "parakeet-tdt-0.6b-v3"]:
-            self.file_model_popup.addItemWithTitle_(model)
+        for m in ["gemini-3-flash-preview", "parakeet-tdt-0.6b-v3"]:
+            self.file_model_popup.addItemWithTitle_(m)
         self.file_model_popup.setTarget_(self)
         self.file_model_popup.setAction_("changeFileModel:")
-        self.window.contentView().addSubview_(self.file_model_popup)
-        y_pos -= 40
+        config_section.addSubview_(self.file_model_popup)
         
-        # Mode Popup
-        mode_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
-        mode_label.setStringValue_("Modo:")
-        mode_label.setBezeled_(False)
-        mode_label.setDrawsBackground_(False)
-        mode_label.setEditable_(False)
-        self.window.contentView().addSubview_(mode_label)
-        
-        self.mode_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
-        for mode_name in SMART_PROMPTS.keys():
-            self.mode_popup.addItemWithTitle_(mode_name)
+        for p in SMART_PROMPTS.keys():
+            self.mode_popup.addItemWithTitle_(p)
         self.mode_popup.setTarget_(self)
         self.mode_popup.setAction_("changeMode:")
-        self.window.contentView().addSubview_(self.mode_popup)
-        y_pos -= 40
+        config_section.addSubview_(self.mode_popup)
         
-        # Shortcut Popup
-        shortcut_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 150, 25))
-        shortcut_label.setStringValue_("Atajo:")
-        shortcut_label.setBezeled_(False)
-        shortcut_label.setDrawsBackground_(False)
-        shortcut_label.setEditable_(False)
-        self.window.contentView().addSubview_(shortcut_label)
-        
-        self.shortcut_popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(170, y_pos, 510, 30))
-        shortcuts = ["F5", "Cmd+Opt+R", "Right Option"]
-        for shortcut in shortcuts:
-            self.shortcut_popup.addItemWithTitle_(shortcut)
+        for s in ["F5", "Cmd+Opt+R", "Right Option"]:
+            self.shortcut_popup.addItemWithTitle_(s)
         self.shortcut_popup.setTarget_(self)
         self.shortcut_popup.setAction_("changeShortcut:")
+        config_section.addSubview_(self.shortcut_popup)
         
-        self.window.contentView().addSubview_(self.shortcut_popup)
-        y_pos -= 40
-        
-        # Edit API Key Button
-        self.api_key_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, y_pos, 300, 35))
-        self.api_key_btn.setBezelStyle_(4)
-        self.api_key_btn.setTitle_("✏️ Editar API Key de Gemini")
+        # API Key Button
+        self.api_key_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, 15, 650, 32))
+        self.api_key_btn.setBezelStyle_(11)
+        self.api_key_btn.setTitle_("🔐 Configurar API Key de Gemini...")
         self.api_key_btn.setTarget_(self)
         self.api_key_btn.setAction_("editAPIKey:")
-        self.window.contentView().addSubview_(self.api_key_btn)
-        y_pos -= 50
+        config_section.addSubview_(self.api_key_btn)
         
-        # Transcription Output
-        output_label = NSTextField.alloc().initWithFrame_(NSMakeRect(20, y_pos, 660, 25))
-        output_label.setStringValue_("📝 Transcripción:")
-        output_label.setBezeled_(False)
-        output_label.setDrawsBackground_(False)
-        output_label.setEditable_(False)
-        self.window.contentView().addSubview_(output_label)
-        y_pos -= 30
+        content_view.addSubview_(config_section)
         
-        # Transcription TextView
-        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 40, 660, y_pos - 40))
-        scroll.setBorderType_(1)  # NSBezelBorder
+        # --- Section: Transcription ---
+        output_section = self._create_card(NSMakeRect(20, 20, 680, 280), "TRANSCRIPCIÓN")
+        
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(15, 60, 650, 190))
+        scroll.setBorderType_(0)
         scroll.setHasVerticalScroller_(True)
-        scroll.setAutohidesScrollers_(True)
+        scroll.setDrawsBackground_(False)
         
         self.transcription_view = NSTextView.alloc().initWithFrame_(scroll.contentView().bounds())
         self.transcription_view.setEditable_(True)
-        self.transcription_view.setFont_(NSFont.systemFontOfSize_(12))
-        self.transcription_view.setAutoresizingMask_(18)  # NSViewWidthSizable | NSViewHeightSizable
+        self.transcription_view.setRichText_(False)
+        self.transcription_view.setInsertionPointColor_(NSColor.whiteColor())
+        self.transcription_view.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.4))
+        self.transcription_view.setTextColor_(NSColor.whiteColor())
+        self.transcription_view.setFont_(NSFont.systemFontOfSize_(13))
         
         scroll.setDocumentView_(self.transcription_view)
-        self.window.contentView().addSubview_(scroll)
+        output_section.addSubview_(scroll)
         
-        # Copy Button
-        self.copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(20, 5, 100, 30))
-        self.copy_btn.setBezelStyle_(4)
-        self.copy_btn.setTitle_("Copiar")
+        # Action Buttons
+        btn_y = 15
+        self.copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(15, btn_y, 200, 32))
+        self.copy_btn.setBezelStyle_(11)
+        self.copy_btn.setTitle_("📋 Copiar al Portapapeles")
         self.copy_btn.setTarget_(self)
         self.copy_btn.setAction_("copyTranscription:")
-        self.window.contentView().addSubview_(self.copy_btn)
+        output_section.addSubview_(self.copy_btn)
         
-        # Clear Button
-        self.clear_btn = NSButton.alloc().initWithFrame_(NSMakeRect(130, 5, 100, 30))
-        self.clear_btn.setBezelStyle_(4)
-        self.clear_btn.setTitle_("Limpiar")
+        self.clear_btn = NSButton.alloc().initWithFrame_(NSMakeRect(230, btn_y, 200, 32))
+        self.clear_btn.setBezelStyle_(11)
+        self.clear_btn.setTitle_("🗑️ Limpiar")
         self.clear_btn.setTarget_(self)
         self.clear_btn.setAction_("clearTranscription:")
-        self.window.contentView().addSubview_(self.clear_btn)
+        output_section.addSubview_(self.clear_btn)
         
-        # Save Button
-        self.save_btn = NSButton.alloc().initWithFrame_(NSMakeRect(240, 5, 100, 30))
-        self.save_btn.setBezelStyle_(4)
-        self.save_btn.setTitle_("Guardar")
+        self.save_btn = NSButton.alloc().initWithFrame_(NSMakeRect(445, btn_y, 220, 32))
+        self.save_btn.setBezelStyle_(11)
+        self.save_btn.setTitle_("💾 Guardar como TXT")
         self.save_btn.setTarget_(self)
         self.save_btn.setAction_("saveTranscription:")
-        self.window.contentView().addSubview_(self.save_btn)
+        output_section.addSubview_(self.save_btn)
+        
+        content_view.addSubview_(output_section)
     
     def show(self):
         """Show window"""
@@ -767,8 +757,9 @@ class DarhisperInterface(NSObject):
         
         if response == 1:
             self.selected_file = panel.URLs()[0].path()
-            self.file_path_text.setStringValue_(self.selected_file)
-            self.file_path_text.setTextColor_(NSColor.blackColor())
+            file_name = os.path.basename(self.selected_file)
+            self.file_path_text.setStringValue_(file_name)
+            self.file_path_text.setTextColor_(NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.9))
             self.transcribe_btn.setEnabled_(True)
     
     @IBAction
@@ -1000,7 +991,7 @@ class DarhisperInterface(NSObject):
                 self.app.config["gemini_api_key"] = new_key
                 self.app.save_config()
                 try:
-                    self.app.gemini_client = genai.Client(api_key=self.gemini_api_key)
+                    self.app.gemini_client = genai.Client(api_key=self.app.gemini_api_key)
                     rumps.notification("Darhisper", "API Key Guardada", "La API Key se ha guardado correctamente")
                 except Exception as e:
                     rumps.notification("Error", "Fallo al inicializar cliente", str(e))
@@ -1203,12 +1194,12 @@ class VoiceTranscriberApp(rumps.App):
         self.start_sound = self.generate_beep(880, 0.1)
         self.stop_sound = self.generate_beep(440, 0.1)
         
-        # Menu items - simplified to just open and quit
+        # Menu items - simplified to just open
         self.menu = [
-            rumps.MenuItem("Abrir Darhisper", callback=self.open_darhisper_interface),
-            rumps.separator,
-            rumps.MenuItem("Quit", callback=rumps.quit_application)
+            rumps.MenuItem("Abrir Darhisper", callback=self.open_darhisper_interface)
         ]
+        if hasattr(self, "quit_button") and self.quit_button:
+            self.quit_button.title = "Cerrar"
         
         # Hotkey listener initialization
         self.current_keys = set()
